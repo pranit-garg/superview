@@ -7,8 +7,8 @@ function escapeHtml(s: string): string {
 function blockActions(id: string): string {
   return `<div class="sv-block-actions">
   <button class="sv-block-action" onclick="openBlockComment('${id}')" title="Comment">&#128172;</button>
-  <button class="sv-block-action" onclick="react('${id}','thumbs_up')" title="Like">&#128077;</button>
-  <button class="sv-block-action" onclick="react('${id}','thumbs_down')" title="Dislike">&#128078;</button>
+  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_up')" title="Like">&#128077;</button>
+  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_down')" title="Dislike">&#128078;</button>
 </div>
 <div class="sv-feedback-input" data-block="${id}">
   <textarea class="sv-feedback-textarea" placeholder="Add comment..."></textarea>

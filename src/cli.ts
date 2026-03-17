@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlink
 import { join, resolve, basename } from 'node:path';
 import { exec } from 'node:child_process';
 import { render } from './core/renderer.js';
-import { ensureDir, appendHistory, readHistory } from './core/history.js';
+import { buildTodayPage } from './core/template.js';
+import { ensureDir, appendHistory, readHistory, readTodayHistory } from './core/history.js';
 import { readFeedback, summarizeFeedback } from './core/feedback.js';
 import { startServer, tryAutoStart } from './core/server.js';
 import type { ContentType, ThemeMode, HistoryEntry } from './types.js';
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
   }
 
   if (args.includes('-v') || (args.includes('--version') && args.length === 1)) {
-    console.log('0.2.0');
+    console.log('0.2.1');
     process.exit(0);
   }
 
@@ -151,12 +152,27 @@ async function handleRender(args: string[], commentMode: boolean): Promise<void>
     updatedAt: new Date().toISOString(),
     filePath: outPath,
     kept: false,
+    preview: content.replace(/[#*_\-\n]+/g, ' ').trim().slice(0, 120),
   };
   appendHistory(process.cwd(), entry);
+  generateTodayPage(process.cwd());
 
   // Open in browser
   if (!options.noOpen) {
     openBrowser(outPath);
+  }
+}
+
+function generateTodayPage(basePath: string): void {
+  try {
+    const todayEntries = readTodayHistory(basePath);
+    const html = buildTodayPage(todayEntries);
+    const dir = ensureDir(basePath);
+    const viewsDir = join(dir, 'views');
+    if (!existsSync(viewsDir)) mkdirSync(viewsDir, { recursive: true });
+    writeFileSync(join(viewsDir, '_today.html'), html, 'utf-8');
+  } catch {
+    // Silently fail - today page is non-critical
   }
 }
 

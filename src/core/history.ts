@@ -50,3 +50,10 @@ export function getHistoryForTask(basePath: string, taskId: string): HistoryEntr
   const entries = readHistory(basePath);
   return entries.filter((e) => e.taskId === taskId);
 }
+
+export function readTodayHistory(basePath: string): HistoryEntry[] {
+  const entries = readHistory(basePath);
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return entries.filter((e) => new Date(e.updatedAt).getTime() >= todayStart);
+}

@@ -77,6 +77,8 @@ export function getThemeToggleScript(): string {
       localStorage.setItem('sv-theme', next);
       var btn = document.getElementById('sv-theme-toggle');
       if (btn) btn.textContent = next === 'day' ? '\\u263E' : '\\u2600';
+      var tbLbl = document.querySelector('#sv-theme-btn .sv-theme-label');
+      if (tbLbl) tbLbl.textContent = next === 'day' ? 'Night' : 'Day';
     }
   `;
 }

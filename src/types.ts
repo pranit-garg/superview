@@ -50,6 +50,7 @@ export interface HistoryEntry {
   updatedAt: string;
   filePath: string;
   kept: boolean;
+  preview?: string;
 }
 
 export interface TextAnchor {

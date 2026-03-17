@@ -1,6 +1,6 @@
 {
   "name": "superview",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Render AI output as beautiful, reviewable HTML with feedback and iteration",
   "type": "module",
   "main": "./dist/index.cjs",

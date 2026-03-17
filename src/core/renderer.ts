@@ -100,6 +100,7 @@ export async function render(content: string, options: RenderOptions = {}): Prom
     taskId,
     feedbackEnabled: true,
     attribution: true,
+    todayPagePath: '_today.html',
   };
 
   return buildHtml(templateOptions);
