@@ -1,26 +1,36 @@
 import type { ContentMetadata } from '../types.js';
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function blockActions(id: string): string {
-  return `<div class="sv-block-actions">
-  <button class="sv-block-action" onclick="openBlockComment('${id}')" title="Comment">&#128172;</button>
-  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_up')" title="Like">&#128077;</button>
-  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_down')" title="Dislike">&#128078;</button>
-</div>
-<div class="sv-feedback-input" data-block="${id}">
-  <textarea class="sv-feedback-textarea" placeholder="Add comment..."></textarea>
-  <button class="sv-feedback-submit" onclick="submitBlockComment('${id}')">Submit</button>
-</div>`;
-}
+import { escapeHtml, renderMarkdown, blockActions } from './shared.js';
 
 export function render(content: string, metadata: ContentMetadata): string {
-  const to = metadata.to || '';
-  const from = metadata.from || '';
-  const subject = metadata.subject || '';
-  const cc = metadata.cc || '';
+  const meta = { ...metadata };
+
+  // Auto-extract metadata from content lines
+  let bodyContent = content;
+  if (!meta.to && !meta.from && !meta.subject) {
+    const lines = content.split('\n');
+    const headerLines: string[] = [];
+    let i = 0;
+    for (; i < lines.length; i++) {
+      const line = lines[i];
+      const toMatch = line.match(/^To:\s*(.+)$/i);
+      const fromMatch = line.match(/^From:\s*(.+)$/i);
+      const subjectMatch = line.match(/^Subject:\s*(.+)$/i);
+      const ccMatch = line.match(/^Cc?:\s*(.+)$/i);
+      if (toMatch) { meta.to = toMatch[1].trim(); headerLines.push(line); }
+      else if (fromMatch) { meta.from = fromMatch[1].trim(); headerLines.push(line); }
+      else if (subjectMatch) { meta.subject = subjectMatch[1].trim(); headerLines.push(line); }
+      else if (ccMatch) { meta.cc = ccMatch[1].trim(); headerLines.push(line); }
+      else break;
+    }
+    if (headerLines.length > 0) {
+      bodyContent = lines.slice(i).join('\n').trim();
+    }
+  }
+
+  const to = meta.to || '';
+  const from = meta.from || '';
+  const subject = meta.subject || '';
+  const cc = meta.cc || '';
 
   const headerFields: string[] = [];
   if (from) headerFields.push(`<div style="margin-bottom:0.25rem"><strong style="color:var(--sv-muted);font-size:0.8rem;display:inline-block;width:60px">From:</strong> ${escapeHtml(from)}</div>`);
@@ -34,16 +44,16 @@ export function render(content: string, metadata: ContentMetadata): string {
       ${blockActions('block-0')}
     </div>` : '';
 
-  const paragraphs = content.split(/\n\n+/).filter(p => p.trim());
+  const paragraphs = bodyContent.split(/\n\n+/).filter(p => p.trim());
   const bodyBlocks = paragraphs.map((para, i) => {
     const blockId = `block-${i + 1}`;
     return `<div class="sv-block" data-block-id="${blockId}" style="padding:0.75rem 1rem">
-      <p style="margin:0;line-height:1.65">${escapeHtml(para.trim()).replace(/\n/g, '<br>')}</p>
+      <p style="margin:0;line-height:1.65">${renderMarkdown(para.trim()).replace(/\n/g, '<br>')}</p>
       ${blockActions(blockId)}
     </div>`;
   }).join('');
 
-  return `<div class="sv-email" style="border-left:4px solid var(--sv-accent);background:var(--sv-surface);border-radius:0 8px 8px 0;box-shadow:var(--sv-card-shadow);overflow:hidden">
+  return `<div class="sv-email" style="border-left:4px solid var(--sv-interactive);background:var(--sv-surface);border-radius:0 8px 8px 0;box-shadow:var(--sv-card-shadow);overflow:hidden">
   ${headerHtml}
   ${bodyBlocks}
 </div>`;

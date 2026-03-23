@@ -2,7 +2,7 @@ import type { FeedbackItem, FeedbackFile } from '../types.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SUPERVIEW_DIR = '.superview';
+const SUPERVIEW_DIR = process.env.SUPERVIEW_DIR || '.superview';
 const FEEDBACK_DIR = 'feedback';
 
 function feedbackDir(basePath: string): string {
@@ -45,7 +45,13 @@ export function addFeedbackItem(basePath: string, taskId: string, item: Feedback
       exportedAt: new Date().toISOString(),
     };
   }
-  file.items.push(item);
+  // Upsert: if item with same ID exists, replace it
+  const existingIdx = file.items.findIndex((i) => i.id === item.id);
+  if (existingIdx >= 0) {
+    file.items[existingIdx] = item;
+  } else {
+    file.items.push(item);
+  }
   file.exportedAt = new Date().toISOString();
   writeFeedback(basePath, taskId, file);
 }
@@ -73,13 +79,12 @@ export function summarizeFeedback(basePath: string, taskId: string): string {
     return `No feedback found for task: ${taskId}`;
   }
 
-  const comments = file.items.filter((i) => i.type === 'block_comment' || i.type === 'text_selection');
-  const reactions = file.items.filter((i) => i.type === 'reaction');
+  const comments = file.items;
   const unresolved = comments.filter((i) => !i.resolved);
   const resolved = comments.filter((i) => i.resolved);
 
   const lines: string[] = [];
-  lines.push(`Task: ${taskId} (${comments.length} comments, ${reactions.length} reactions)`);
+  lines.push(`Task: ${taskId} (${comments.length} comments)`);
   lines.push('');
 
   if (unresolved.length > 0) {
@@ -90,14 +95,6 @@ export function summarizeFeedback(basePath: string, taskId: string): string {
       } else {
         lines.push(`  [${item.blockId}] "${item.text || ''}"`);
       }
-    }
-    lines.push('');
-  }
-
-  if (reactions.length > 0) {
-    lines.push('REACTIONS:');
-    for (const item of reactions) {
-      lines.push(`  [${item.blockId}] ${item.reaction || 'unknown'}`);
     }
     lines.push('');
   }

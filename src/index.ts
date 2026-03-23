@@ -1,6 +1,6 @@
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { exec } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { render as renderHtml } from './core/renderer.js';
 import { ensureDir, appendHistory } from './core/history.js';
 import type { RenderOptions, ContentType, HistoryEntry } from './types.js';
@@ -58,14 +58,13 @@ export async function writeAndOpen(
   // Open in browser
   if (options.open !== false && !options.noOpen) {
     const absPath = resolve(outPath);
-    const platform = process.platform;
-    const cmd = platform === 'darwin'
-      ? `open "${absPath}"`
-      : platform === 'win32'
-        ? `start "" "${absPath}"`
-        : `xdg-open "${absPath}"`;
-
-    exec(cmd, () => {});
+    if (process.platform === 'darwin') {
+      spawn('open', [absPath], { stdio: 'ignore', detached: true }).unref();
+    } else if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', absPath], { stdio: 'ignore', detached: true }).unref();
+    } else {
+      spawn('xdg-open', [absPath], { stdio: 'ignore', detached: true }).unref();
+    }
   }
 
   return outPath;

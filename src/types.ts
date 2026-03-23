@@ -23,6 +23,8 @@ export interface RenderOptions {
   version?: number;
   previousContent?: string;
   metadata?: ContentMetadata;
+  images?: string[];
+  basePath?: string;
 }
 
 export interface ContentMetadata {
@@ -37,6 +39,7 @@ export interface ContentMetadata {
   language?: string;
   filename?: string;
   columns?: string[];
+  images?: string[];
 }
 
 export interface HistoryEntry {
@@ -50,6 +53,7 @@ export interface HistoryEntry {
   updatedAt: string;
   filePath: string;
   kept: boolean;
+  variantOf?: string;
   preview?: string;
 }
 
@@ -63,13 +67,12 @@ export interface TextAnchor {
 }
 
 export interface FeedbackItem {
-  type: 'block_comment' | 'text_selection' | 'reaction';
+  type: 'block_comment' | 'text_selection';
   id: string;
   blockId: string;
   version: number;
   text?: string;
   anchor?: TextAnchor;
-  reaction?: 'thumbs_up' | 'thumbs_down' | 'flag';
   createdAt: string;
   resolved: boolean;
 }

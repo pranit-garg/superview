@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
   ContentType,
   RenderOptions,
@@ -41,9 +43,15 @@ export async function render(content: string, options: RenderOptions = {}): Prom
   const type = options.type || detectContentType(content);
   const title = options.title || generateTitle(content, type);
   const theme = options.theme || 'auto';
-  const metadata = options.metadata || {};
+  const metadata: ContentMetadata = { ...(options.metadata || {}) };
+
+  // Merge images from options into metadata
+  if (options.images && options.images.length > 0) {
+    metadata.images = options.images;
+  }
   const version = options.version || 1;
   const taskId = options.taskId || generateTaskId();
+  const basePath = options.basePath || process.cwd();
 
   // Get the content-type-specific renderer
   const getRenderer = templateRenderers[type];
@@ -62,6 +70,46 @@ export async function render(content: string, options: RenderOptions = {}): Prom
       feedbackCount: 0,
     });
   }
+  // Compute diff if we have previous content
+  let diffHtml: string | undefined;
+  if (options.previousContent) {
+    const segments = computeDiff(options.previousContent, content);
+    diffHtml = renderDiffHtml(segments);
+  }
+
+  // Best-effort: try to find previousContent from history if not provided
+  if (!options.previousContent && !options.noSidebar) {
+    try {
+      const allHistory = readHistory(basePath);
+      // Find entries with same title, sorted newest first
+      const sameTitle = allHistory.filter(e =>
+        e.title === title && e.taskId !== taskId
+      );
+      if (sameTitle.length > 0) {
+        // Try to read the most recent previous entry's content file
+        const prevEntry = sameTitle[0];
+        const prevContentPath = join(basePath, '.superview', 'content', `${prevEntry.taskId}.txt`);
+        if (existsSync(prevContentPath)) {
+          const prevContent = readFileSync(prevContentPath, 'utf-8');
+          if (prevContent !== content) {  // Only show if actually different
+            const prevHtml = templateRender(prevContent, metadata);
+            versions.push({
+              version: version - 1,
+              content: prevHtml,
+              renderedAt: prevEntry.updatedAt || new Date().toISOString(),
+              feedbackCount: 0,
+            });
+            // Also compute diff for later use
+            const segments = computeDiff(prevContent, content);
+            diffHtml = renderDiffHtml(segments);
+          }
+        }
+      }
+    } catch {
+      // Best-effort, ignore failures
+    }
+  }
+
   // Latest version (renders fully at top, not inside an accordion)
   versions.push({
     version,
@@ -70,18 +118,11 @@ export async function render(content: string, options: RenderOptions = {}): Prom
     feedbackCount: 0,
   });
 
-  // Compute diff if we have previous content
-  let diffHtml: string | undefined;
-  if (options.previousContent) {
-    const segments = computeDiff(options.previousContent, content);
-    diffHtml = renderDiffHtml(segments);
-  }
-
   // Read history for sidebar
   let history: HistoryEntry[] = [];
   if (!options.noSidebar) {
     try {
-      history = readHistory(process.cwd());
+      history = readHistory(basePath);
     } catch {
       // No history yet, that's fine
     }

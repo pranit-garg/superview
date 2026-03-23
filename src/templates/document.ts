@@ -1,20 +1,5 @@
 import type { ContentMetadata } from '../types.js';
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function blockActions(id: string): string {
-  return `<div class="sv-block-actions">
-  <button class="sv-block-action" onclick="openBlockComment('${id}')" title="Comment">&#128172;</button>
-  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_up')" title="Like">&#128077;</button>
-  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_down')" title="Dislike">&#128078;</button>
-</div>
-<div class="sv-feedback-input" data-block="${id}">
-  <textarea class="sv-feedback-textarea" placeholder="Add comment..."></textarea>
-  <button class="sv-feedback-submit" onclick="submitBlockComment('${id}')">Submit</button>
-</div>`;
-}
+import { escapeHtml, renderMarkdown, blockActions } from './shared.js';
 
 function parseMarkdownLine(line: string): { tag: string; content: string } | null {
   const h3 = line.match(/^###\s+(.+)/);
@@ -38,7 +23,7 @@ export function render(content: string, metadata: ContentMetadata): string {
     if (!text) { currentPara = []; return; }
     const blockId = `block-${blockIdx++}`;
     blocks.push(`<div class="sv-block" data-block-id="${blockId}" style="padding:0.5rem 0">
-      <p style="margin:0;line-height:1.7;font-size:0.95rem">${escapeHtml(text).replace(/\n/g, '<br>')}</p>
+      <p style="margin:0;line-height:1.7;font-size:0.95rem">${renderMarkdown(text).replace(/\n/g, '<br>')}</p>
       ${blockActions(blockId)}
     </div>`);
     currentPara = [];
@@ -52,7 +37,7 @@ export function render(content: string, metadata: ContentMetadata): string {
       const sizes: Record<string, string> = { h1: '1.5rem', h2: '1.25rem', h3: '1.05rem' };
       const margins: Record<string, string> = { h1: '1.5rem', h2: '1.25rem', h3: '1rem' };
       blocks.push(`<div class="sv-block" data-block-id="${blockId}" style="padding:0.5rem 0;margin-top:${margins[heading.tag]}">
-        <${heading.tag} style="font-size:${sizes[heading.tag]};margin:0;line-height:1.3">${escapeHtml(heading.content)}</${heading.tag}>
+        <${heading.tag} style="font-size:${sizes[heading.tag]};margin:0;line-height:1.3">${renderMarkdown(heading.content)}</${heading.tag}>
         ${blockActions(blockId)}
       </div>`);
     } else if (line.trim() === '') {

@@ -94,12 +94,14 @@ describe('feedback', () => {
     expect(result).toContain('2 comments');
   });
 
-  it('summarizeFeedback includes reactions', () => {
-    addFeedbackItem(TEST_DIR, 'task-3', makeItem({ type: 'reaction', blockId: 'block-1', reaction: 'thumbs_up', text: undefined }));
+  it('summarizeFeedback counts all comments', () => {
+    addFeedbackItem(TEST_DIR, 'task-3', makeItem({ blockId: 'block-1', text: 'First comment' }));
+    addFeedbackItem(TEST_DIR, 'task-3', makeItem({ blockId: 'block-2', text: 'Second comment' }));
 
     const result = summarizeFeedback(TEST_DIR, 'task-3');
-    expect(result).toContain('REACTIONS:');
-    expect(result).toContain('thumbs_up');
+    expect(result).toContain('2 comments');
+    expect(result).toContain('First comment');
+    expect(result).toContain('Second comment');
   });
 
   it('summarizeFeedback includes text selection anchor', () => {

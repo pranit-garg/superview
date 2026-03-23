@@ -1,20 +1,5 @@
 import type { ContentMetadata } from '../types.js';
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function blockActions(id: string): string {
-  return `<div class="sv-block-actions">
-  <button class="sv-block-action" onclick="openBlockComment('${id}')" title="Comment">&#128172;</button>
-  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_up')" title="Like">&#128077;</button>
-  <button class="sv-block-action" onclick="react(this,'${id}','thumbs_down')" title="Dislike">&#128078;</button>
-</div>
-<div class="sv-feedback-input" data-block="${id}">
-  <textarea class="sv-feedback-textarea" placeholder="Add comment..."></textarea>
-  <button class="sv-feedback-submit" onclick="submitBlockComment('${id}')">Submit</button>
-</div>`;
-}
+import { escapeHtml, blockActions } from './shared.js';
 
 function parsePipeTable(content: string): { headers: string[]; rows: string[][] } | null {
   const lines = content.trim().split('\n').filter(l => l.trim());

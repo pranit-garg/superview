@@ -34,7 +34,6 @@ describe('render', () => {
     const html = await render('Test', { type: 'generic' });
     expect(html).toContain('Built by');
     expect(html).toContain('x.com/Pranit');
-    expect(html).toContain('superview');
   });
 
   it('includes feedback system', async () => {

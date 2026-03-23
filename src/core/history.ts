@@ -2,7 +2,7 @@ import type { HistoryEntry } from '../types.js';
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SUPERVIEW_DIR = '.superview';
+const SUPERVIEW_DIR = process.env.SUPERVIEW_DIR || '.superview';
 const HISTORY_FILE = 'history.jsonl';
 
 export function ensureDir(basePath: string): string {
@@ -56,4 +56,16 @@ export function readTodayHistory(basePath: string): HistoryEntry[] {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   return entries.filter((e) => new Date(e.updatedAt).getTime() >= todayStart);
+}
+
+export function getVariants(basePath: string, taskId: string): HistoryEntry[] {
+  const entries = readHistory(basePath);
+  return entries.filter((e) => e.variantOf === taskId || e.taskId === taskId);
+}
+
+export function getLatestTaskId(basePath: string): string | null {
+  const entries = readHistory(basePath);
+  if (entries.length === 0) return null;
+  // readHistory already sorts by updatedAt desc, so first entry is latest
+  return entries[0].taskId;
 }
