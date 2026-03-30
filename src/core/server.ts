@@ -1,12 +1,31 @@
 import { createServer, request as httpRequest, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join, dirname, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { URL, fileURLToPath } from 'node:url';
 import type { FeedbackItem } from '../types.js';
-import { addFeedbackItem } from './feedback.js';
+import { addFeedbackItem, deleteFeedbackItem, readFeedback } from './feedback.js';
+import {
+  buildHistoryPreview,
+  findWorkspaceBasePaths,
+  getHistoryForTask,
+  renameTask,
+  renderHistoryDataScript,
+  updateTaskVersionHistory,
+} from './history.js';
+import { buildReviewMachinePayload, getLatestReviewTaskId, readReviewBundle, renameReviewBundleTitle } from './review.js';
+import { syncWorkspaceArtifacts } from './sync.js';
+import {
+  ensureTaskContentManifest,
+  readTaskContent,
+  renameTaskContentManifest,
+  upsertTaskContentManifest,
+} from './task-content.js';
+import { applyCanonicalContentEdit, applyLegacyContentEdits, ContentSaveError } from './editable-content.js';
+import { rewriteTaskViews, upgradeViewHtml } from './view-upgrade.js';
 
 const DEFAULT_PORT = 3847;
+const APP_VERSION = '0.3.1';
 const MAX_SSE_CLIENTS = 100;
 const SSE_TIMEOUT_MS = 5 * 60 * 1000;
 const SSE_HEARTBEAT_MS = 30 * 1000;
@@ -54,6 +73,76 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+function getAllowedBasePaths(basePath: string): Set<string> {
+  return new Set(findWorkspaceBasePaths(basePath).map((entry) => resolve(entry)));
+}
+
+function resolveTargetBasePath(serverBasePath: string, requestedBasePath?: string | null): string | null {
+  if (!requestedBasePath) return resolve(serverBasePath);
+  const resolvedBasePath = resolve(requestedBasePath);
+  return getAllowedBasePaths(serverBasePath).has(resolvedBasePath) ? resolvedBasePath : null;
+}
+
+function resolveViewFilePath(basePath: string, requestedFile: string | null): string | null {
+  if (!requestedFile) return null;
+  const fileName = basename(requestedFile);
+  if (!fileName.endsWith('.html')) return null;
+  const viewsDir = resolve(join(basePath, '.superview', 'views'));
+  const filePath = resolve(join(viewsDir, fileName));
+  if (filePath !== viewsDir && !filePath.startsWith(`${viewsDir}${sep}`)) {
+    return null;
+  }
+  return filePath;
+}
+
+function resolveCompatibilityReviewBundle(
+  targetBasePath: string,
+  pathname: string,
+  searchParams: URLSearchParams,
+): ReturnType<typeof readReviewBundle> {
+  const normalizedPath = pathname.replace(/\/+$/, '') || pathname;
+  const routeMatch = normalizedPath.match(/^\/(feedback|inbox|review)(?:\/([^/]+?))(?:\.json)?$/);
+  const prefixMatch = normalizedPath.match(/^\/(feedback|inbox|review)$/);
+  if (!routeMatch && !prefixMatch) return null;
+
+  const token = routeMatch?.[2] || searchParams.get('taskId') || searchParams.get('id') || searchParams.get('reviewId') || 'latest';
+  const taskId = token === 'latest'
+    ? getLatestReviewTaskId(targetBasePath)
+    : token;
+  if (!taskId) return null;
+  return readReviewBundle(targetBasePath, taskId);
+}
+
+function sendCompatibilityReviewBundle(
+  res: ServerResponse,
+  targetBasePath: string,
+  pathname: string,
+  searchParams: URLSearchParams,
+): boolean {
+  const bundle = resolveCompatibilityReviewBundle(targetBasePath, pathname, searchParams);
+  if (!bundle) return false;
+  json(res, 200, buildReviewMachinePayload(targetBasePath, bundle));
+  return true;
+}
+
+function readServedHtml(targetBasePath: string, filePath: string): string {
+  const rawHtml = readFileSync(filePath, 'utf-8');
+  const upgradedHtml = upgradeViewHtml(targetBasePath, filePath, rawHtml);
+  const baseHtml = upgradedHtml || rawHtml;
+  const servedHtml = baseHtml.includes('window.__svServedMode = false;')
+    ? baseHtml.replace('window.__svServedMode = false;', 'window.__svServedMode = true;')
+    : baseHtml;
+
+  if (upgradedHtml && upgradedHtml !== rawHtml) {
+    try {
+      writeFileSync(filePath, upgradedHtml, 'utf-8');
+    } catch {
+      // Non-critical: serve upgraded HTML even if the write-through fails.
+    }
+  }
+  return servedHtml;
+}
+
 export function startServer(basePath: string, port?: number): Server {
   const actualPort = port ?? DEFAULT_PORT;
   const sseClients: SSEClient[] = [];
@@ -90,36 +179,38 @@ export function startServer(basePath: string, port?: number): Server {
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const method = req.method ?? 'GET';
-    const url = req.url ?? '/';
+    const rawUrl = req.url ?? '/';
+    const url = new URL(rawUrl, 'http://localhost');
+    const pathname = url.pathname;
 
     // OPTIONS preflight
     if (method === 'OPTIONS') {
       setCors(res);
       res.writeHead(204);
       res.end();
-      console.log(`[superview] ${method} ${url} 204`);
+      console.log(`[superview] ${method} ${rawUrl} 204`);
       return;
     }
 
     // GET /health
-    if (method === 'GET' && url === '/health') {
-      json(res, 200, { status: 'ok', version: '0.2.0' });
-      console.log(`[superview] ${method} ${url} 200`);
+    if (method === 'GET' && pathname === '/health') {
+      json(res, 200, { status: 'ok', version: APP_VERSION });
+      console.log(`[superview] ${method} ${rawUrl} 200`);
       return;
     }
 
     // GET /info
-    if (method === 'GET' && url === '/info') {
-      json(res, 200, { status: 'ok', basePath: resolve(basePath), version: '0.2.0' });
-      console.log(`[superview] ${method} ${url} 200`);
+    if (method === 'GET' && pathname === '/info') {
+      json(res, 200, { status: 'ok', basePath: resolve(basePath), version: APP_VERSION });
+      console.log(`[superview] ${method} ${rawUrl} 200`);
       return;
     }
 
     // GET /events (SSE)
-    if (method === 'GET' && url === '/events') {
+    if (method === 'GET' && pathname === '/events') {
       if (sseClients.length >= MAX_SSE_CLIENTS) {
         json(res, 503, { error: 'Too many SSE connections' });
-        console.log(`[superview] ${method} ${url} 503 (max SSE clients)`);
+        console.log(`[superview] ${method} ${rawUrl} 503 (max SSE clients)`);
         return;
       }
       setCors(res);
@@ -136,39 +227,166 @@ export function startServer(basePath: string, port?: number): Server {
         const idx = sseClients.indexOf(client);
         if (idx !== -1) sseClients.splice(idx, 1);
       });
-      console.log(`[superview] ${method} ${url} 200 (SSE)`);
+      console.log(`[superview] ${method} ${rawUrl} 200 (SSE)`);
+      return;
+    }
+
+    if (method === 'GET' && (pathname === '/feedback' || pathname === '/feedback/latest' || pathname.startsWith('/feedback/') || pathname === '/inbox' || pathname === '/inbox/latest' || pathname.startsWith('/inbox/') || pathname === '/review' || pathname === '/review/latest' || pathname.startsWith('/review/'))) {
+      const targetBasePath = resolveTargetBasePath(basePath, url.searchParams.get('base'));
+      if (!targetBasePath) {
+        json(res, 403, { error: 'Forbidden basePath' });
+        console.log(`[superview] ${method} ${rawUrl} 403`);
+        return;
+      }
+      if (sendCompatibilityReviewBundle(res, targetBasePath, pathname, url.searchParams)) {
+        console.log(`[superview] ${method} ${rawUrl} 200`);
+        return;
+      }
+      json(res, 404, { error: 'Review bundle not found' });
+      console.log(`[superview] ${method} ${rawUrl} 404`);
       return;
     }
 
     // POST /feedback
-    if (method === 'POST' && url === '/feedback') {
+    if (method === 'POST' && pathname === '/feedback') {
       try {
         const body = await readBody(req);
-        const parsed = JSON.parse(body) as { taskId: string; item: FeedbackItem };
+        const parsed = JSON.parse(body) as { taskId: string; item: FeedbackItem; basePath?: string };
         if (!parsed.taskId || !parsed.item) {
           json(res, 400, { error: 'Missing taskId or item' });
-          console.log(`[superview] ${method} ${url} 400`);
+          console.log(`[superview] ${method} ${rawUrl} 400`);
           return;
         }
-        addFeedbackItem(basePath, parsed.taskId, parsed.item);
-        broadcast({ type: 'feedback', taskId: parsed.taskId, item: parsed.item });
+        const targetBasePath = resolveTargetBasePath(basePath, parsed.basePath);
+        if (!targetBasePath) {
+          json(res, 403, { error: 'Forbidden basePath' });
+          console.log(`[superview] ${method} ${rawUrl} 403`);
+          return;
+        }
+        const taskHistory = getHistoryForTask(targetBasePath, parsed.taskId);
+        const latestTaskEntry = taskHistory[0];
+        addFeedbackItem(targetBasePath, parsed.taskId, parsed.item, {
+          title: latestTaskEntry?.title,
+          currentVersion: latestTaskEntry?.versions,
+          syncState: 'synced',
+        });
+        broadcast({ type: 'feedback', taskId: parsed.taskId, item: parsed.item, basePath: targetBasePath });
         json(res, 200, { ok: true });
-        console.log(`[superview] ${method} ${url} 200`);
+        console.log(`[superview] ${method} ${rawUrl} 200`);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         json(res, 400, { error: message });
-        console.log(`[superview] ${method} ${url} 400`);
+        console.log(`[superview] ${method} ${rawUrl} 400`);
       }
       return;
     }
 
+    if (method === 'POST' && pathname === '/feedback/delete') {
+      try {
+        const body = await readBody(req);
+        const parsed = JSON.parse(body) as { taskId: string; itemId: string; basePath?: string };
+        if (!parsed.taskId || !parsed.itemId) {
+          json(res, 400, { error: 'Missing taskId or itemId' });
+          return;
+        }
+        const targetBasePath = resolveTargetBasePath(basePath, parsed.basePath);
+        if (!targetBasePath) {
+          json(res, 403, { error: 'Forbidden basePath' });
+          return;
+        }
+        deleteFeedbackItem(targetBasePath, parsed.taskId, parsed.itemId);
+        broadcast({ type: 'feedback_delete', taskId: parsed.taskId, itemId: parsed.itemId, basePath: targetBasePath });
+        json(res, 200, { ok: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        json(res, 400, { error: message });
+      }
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/rename-task') {
+      try {
+        const body = await readBody(req);
+        const parsed = JSON.parse(body) as { taskId: string; title: string; basePath?: string };
+        if (!parsed.taskId || !parsed.title || !parsed.title.trim()) {
+          json(res, 400, { error: 'Missing taskId or title' });
+          return;
+        }
+        const targetBasePath = resolveTargetBasePath(basePath, parsed.basePath);
+        if (!targetBasePath) {
+          json(res, 403, { error: 'Forbidden basePath' });
+          return;
+        }
+
+        const renamedCount = renameTask(targetBasePath, parsed.taskId, parsed.title.trim());
+        if (renamedCount === 0) {
+          json(res, 404, { error: 'Task not found' });
+          return;
+        }
+        renameTaskContentManifest(targetBasePath, parsed.taskId, parsed.title.trim());
+        renameReviewBundleTitle(targetBasePath, parsed.taskId, parsed.title.trim());
+
+        rewriteTaskViews(targetBasePath, parsed.taskId);
+        syncWorkspaceArtifacts(targetBasePath);
+        broadcast({
+          type: 'task_rename',
+          taskId: parsed.taskId,
+          title: parsed.title.trim(),
+          basePath: targetBasePath,
+        });
+        json(res, 200, { ok: true, renamedCount });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        json(res, 400, { error: message });
+      }
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/_history-data.js') {
+      const targetBasePath = resolveTargetBasePath(basePath, url.searchParams.get('base'));
+      if (!targetBasePath) {
+        json(res, 403, { error: 'Forbidden basePath' });
+        console.log(`[superview] ${method} ${rawUrl} 403`);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', ...CORS_HEADERS });
+      res.end(renderHistoryDataScript(targetBasePath));
+      console.log(`[superview] ${method} ${rawUrl} 200`);
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/_view') {
+      const targetBasePath = resolveTargetBasePath(basePath, url.searchParams.get('base'));
+      if (!targetBasePath) {
+        json(res, 403, { error: 'Forbidden basePath' });
+        console.log(`[superview] ${method} ${rawUrl} 403`);
+        return;
+      }
+      const filePath = resolveViewFilePath(targetBasePath, url.searchParams.get('file'));
+      if (!filePath) {
+        json(res, 400, { error: 'Invalid file' });
+        console.log(`[superview] ${method} ${rawUrl} 400`);
+        return;
+      }
+      if (!existsSync(filePath)) {
+        json(res, 404, { error: 'Not found' });
+        console.log(`[superview] ${method} ${rawUrl} 404`);
+        return;
+      }
+      const html = readServedHtml(targetBasePath, filePath);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...CORS_HEADERS });
+      res.end(html);
+      console.log(`[superview] ${method} ${rawUrl} 200`);
+      return;
+    }
+
     // GET / → serve latest rendered HTML
-    if (method === 'GET' && url === '/') {
+    if (method === 'GET' && pathname === '/') {
       try {
         const viewsDir = join(basePath, '.superview', 'views');
         const latestPath = join(viewsDir, '_latest.html');
         if (existsSync(latestPath)) {
-          const html = readFileSync(latestPath, 'utf-8');
+          const html = readServedHtml(basePath, latestPath);
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...CORS_HEADERS });
           res.end(html);
         } else {
@@ -182,7 +400,7 @@ export function startServer(basePath: string, port?: number): Server {
               try{var d=JSON.parse(e.data);if(d.type==='new_render')location.reload();}catch(err){}
             });</script></body></html>`);
         }
-        console.log(`[superview] ${method} ${url} 200`);
+        console.log(`[superview] ${method} ${rawUrl} 200`);
         return;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
@@ -192,18 +410,17 @@ export function startServer(basePath: string, port?: number): Server {
     }
 
     // Serve static files from .superview/views/ (JS, images, etc.)
-    if (method === 'GET' && (url.startsWith('/_') || url.endsWith('.js') || url.endsWith('.png') || url.endsWith('.jpg') || url.endsWith('.html'))) {
+    if (method === 'GET' && (pathname.startsWith('/_') || pathname.endsWith('.js') || pathname.endsWith('.png') || pathname.endsWith('.jpg') || pathname.endsWith('.html'))) {
       const viewsDir = resolve(join(basePath, '.superview', 'views'));
-      const filePath = resolve(join(viewsDir, decodeURIComponent(url.slice(1))));
-      if (!filePath.startsWith(viewsDir)) {
+      const filePath = resolve(join(viewsDir, decodeURIComponent(pathname.slice(1))));
+      if (filePath !== viewsDir && !filePath.startsWith(`${viewsDir}${sep}`)) {
         json(res, 403, { error: 'Forbidden' });
-        console.log(`[superview] ${method} ${url} 403 (path traversal blocked)`);
+        console.log(`[superview] ${method} ${rawUrl} 403 (path traversal blocked)`);
         return;
       }
       try {
         if (existsSync(filePath)) {
-          const content = readFileSync(filePath);
-          const ext = url.split('.').pop() || '';
+          const ext = pathname.split('.').pop() || '';
           const mimeTypes: Record<string, string> = {
             'html': 'text/html; charset=utf-8',
             'js': 'application/javascript; charset=utf-8',
@@ -215,8 +432,12 @@ export function startServer(basePath: string, port?: number): Server {
             'json': 'application/json',
           };
           res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', ...CORS_HEADERS });
-          res.end(content);
-          console.log(`[superview] ${method} ${url} 200`);
+          if (ext === 'html') {
+            res.end(readServedHtml(basePath, filePath));
+          } else {
+            res.end(readFileSync(filePath));
+          }
+          console.log(`[superview] ${method} ${rawUrl} 200`);
           return;
         }
       } catch {
@@ -225,45 +446,122 @@ export function startServer(basePath: string, port?: number): Server {
     }
 
     // POST /notify — trigger auto-refresh for all connected clients
-    if (method === 'POST' && url === '/notify') {
+    if (method === 'POST' && pathname === '/notify') {
       broadcast({ type: 'new_render' });
       json(res, 200, { ok: true });
-      console.log(`[superview] ${method} ${url} 200 (broadcast)`);
+      console.log(`[superview] ${method} ${rawUrl} 200 (broadcast)`);
       return;
     }
 
     // POST /save-content — save edited content from inline editing
-    if (method === 'POST' && url === '/save-content') {
+    if (method === 'POST' && pathname === '/save-content') {
       try {
         const body = await readBody(req);
-        const parsed = JSON.parse(body) as { taskId: string; blockId: string; newText: string };
+        const parsed = JSON.parse(body) as { taskId: string; blockId: string; version?: number; itemId?: string; newText: string; basePath?: string; clientId?: string };
         if (!parsed.taskId || !parsed.blockId || parsed.newText === undefined) {
           json(res, 400, { error: 'Missing taskId, blockId, or newText' });
           return;
         }
-        // Save the edit as a feedback item for tracking
-        const editItem = {
+        const targetBasePath = resolveTargetBasePath(basePath, parsed.basePath);
+        if (!targetBasePath) {
+          json(res, 403, { error: 'Forbidden basePath' });
+          return;
+        }
+        const taskHistory = getHistoryForTask(targetBasePath, parsed.taskId);
+        const latestTaskEntry = taskHistory[0];
+        if (!latestTaskEntry) {
+          json(res, 404, { error: 'Task not found' });
+          return;
+        }
+        const currentVersion = latestTaskEntry.versions || parsed.version || 1;
+        if (parsed.version && parsed.version !== currentVersion) {
+          json(res, 409, { error: 'Only the latest task version can be edited' });
+          return;
+        }
+        const manifest = ensureTaskContentManifest(targetBasePath, parsed.taskId, {
+          type: latestTaskEntry.type,
+          title: latestTaskEntry.title,
+          metadata: {},
+          currentVersion,
+          latestViewFile: latestTaskEntry.filePath,
+        });
+        const canonicalContent = readTaskContent(targetBasePath, parsed.taskId);
+        if (!manifest || canonicalContent === null) {
+          json(res, 404, { error: 'Canonical task content not found' });
+          return;
+        }
+        const feedbackItems = readFeedback(targetBasePath, parsed.taskId)?.items || [];
+        const materializedContent = applyLegacyContentEdits(manifest, canonicalContent, feedbackItems);
+        if (materializedContent !== canonicalContent) {
+          upsertTaskContentManifest(targetBasePath, parsed.taskId, materializedContent, {
+            type: manifest.type,
+            title: manifest.title,
+            metadata: manifest.metadata,
+            currentVersion: manifest.currentVersion || currentVersion,
+            latestViewFile: manifest.latestViewFile || latestTaskEntry.filePath,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        const editResult = applyCanonicalContentEdit(manifest, materializedContent, parsed.blockId, String(parsed.newText));
+        const updatedAt = new Date().toISOString();
+        upsertTaskContentManifest(targetBasePath, parsed.taskId, editResult.content, {
+          type: manifest.type,
+          title: manifest.title,
+          metadata: manifest.metadata,
+          currentVersion: manifest.currentVersion || currentVersion,
+          latestViewFile: manifest.latestViewFile || latestTaskEntry.filePath,
+          updatedAt,
+        });
+        const editItem: FeedbackItem = {
           type: 'content_edit',
-          id: 'edit-' + parsed.blockId + '-' + Date.now(),
+          id: parsed.itemId || `edit-${parsed.blockId}-${Date.now()}`,
           blockId: parsed.blockId,
-          text: parsed.newText,
-          createdAt: new Date().toISOString(),
+          version: manifest.currentVersion || currentVersion,
+          text: editResult.savedText,
+          createdAt: updatedAt,
           resolved: false,
         };
-        addFeedbackItem(basePath, parsed.taskId, editItem as any);
-        broadcast({ type: 'content_edit', taskId: parsed.taskId, blockId: parsed.blockId });
-        json(res, 200, { ok: true });
-        console.log(`[superview] ${method} ${url} 200`);
+        addFeedbackItem(targetBasePath, parsed.taskId, editItem, {
+          title: manifest.title,
+          currentVersion: manifest.currentVersion || currentVersion,
+          syncState: 'synced',
+        });
+        updateTaskVersionHistory(targetBasePath, parsed.taskId, manifest.currentVersion || currentVersion, {
+          preview: buildHistoryPreview(editResult.content),
+          updatedAt,
+          filePath: manifest.latestViewFile || latestTaskEntry.filePath,
+        });
+        const rewrittenViews = rewriteTaskViews(targetBasePath, parsed.taskId);
+        syncWorkspaceArtifacts(targetBasePath);
+        broadcast({
+          type: 'content_saved',
+          taskId: parsed.taskId,
+          blockId: parsed.blockId,
+          basePath: targetBasePath,
+          updatedAt,
+          clientId: parsed.clientId || '',
+        });
+        json(res, 200, {
+          ok: true,
+          taskId: parsed.taskId,
+          blockId: parsed.blockId,
+          savedText: editResult.savedText,
+          updatedAt,
+          rewrittenViews,
+          item: editItem,
+        });
+        console.log(`[superview] ${method} ${rawUrl} 200`);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
-        json(res, 400, { error: message });
+        const status = err instanceof ContentSaveError ? err.status : 400;
+        json(res, status, { error: message });
       }
       return;
     }
 
     // 404 for everything else
     json(res, 404, { error: 'Not found' });
-    console.log(`[superview] ${method} ${url} 404`);
+    console.log(`[superview] ${method} ${rawUrl} 404`);
   });
 
   server.listen(actualPort, () => {

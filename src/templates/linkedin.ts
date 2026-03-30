@@ -1,5 +1,5 @@
 import type { ContentMetadata } from '../types.js';
-import { escapeHtml, renderMarkdown, blockActions } from './shared.js';
+import { escapeHtml, renderMarkdown, blockActions, scopedBlockId, copyDataAttributes, editableDataAttributes } from './shared.js';
 
 const LINKEDIN_SECTIONS = ['About', 'Experience', 'Education', 'Skills', 'Featured'] as const;
 
@@ -10,7 +10,7 @@ interface ParsedSection {
   content: string;
 }
 
-function isProfileContent(content: string): boolean {
+export function isProfileContent(content: string): boolean {
   const headers = content.match(/^## .+$/gm) || [];
   const matchCount = headers.filter((h) => {
     const name = h.replace(/^## /, '').trim();
@@ -19,7 +19,7 @@ function isProfileContent(content: string): boolean {
   return matchCount >= 2;
 }
 
-function parseSections(content: string): ParsedSection[] {
+export function parseSections(content: string): ParsedSection[] {
   const sections: ParsedSection[] = [];
   const lines = content.split('\n');
   let currentSection: ParsedSection | null = null;
@@ -88,19 +88,19 @@ function renderDiffSideBySide(current: string, proposed: string): string {
 function renderProfileLayout(content: string, metadata: ContentMetadata): string {
   const sections = parseSections(content);
 
-  const currentContent = (metadata as ContentMetadata & { currentContent?: string }).currentContent;
+  const currentContent = metadata.currentContent;
   const hasDiff = typeof currentContent === 'string' && currentContent.length > 0;
 
   const sectionCards = sections.map((section, i) => {
-    const blockId = `section-${i}`;
+    const blockId = scopedBlockId(metadata, `section-${i}`);
     const isAbout = section.name.toLowerCase() === 'about';
     const charCount = isAbout ? aboutCharCount(section.content) : '';
 
-    return `<div class="sv-block" data-block-id="${blockId}" style="padding:1rem;border-bottom:1px solid var(--sv-border)">
+    return `<div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(section.content.trim())} style="padding:1rem;border-bottom:1px solid var(--sv-border)">
       <div style="font-weight:700;font-size:1rem;margin-bottom:0.5rem">${escapeHtml(section.name)}</div>
-      <div style="white-space:pre-line;line-height:1.6;font-size:0.925rem">${renderMarkdown(section.content)}</div>
+      <div ${editableDataAttributes(section.content, { format: 'markdown', kind: 'paragraph' })} style="white-space:pre-line;line-height:1.6;font-size:0.925rem">${renderMarkdown(section.content)}</div>
       ${charCount}
-      ${blockActions(blockId)}
+      ${blockActions(blockId, metadata)}
     </div>`;
   }).join('');
 
@@ -111,7 +111,7 @@ function renderProfileLayout(content: string, metadata: ContentMetadata): string
       </div>`
     : '';
 
-  return `<div class="sv-linkedin-profile" style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;overflow:hidden;max-width:650px;box-shadow:var(--sv-card-shadow)">
+  return `<div class="sv-linkedin-profile" ${copyDataAttributes(content.trim(), { primary: true })} style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;overflow:hidden;max-width:650px;box-shadow:var(--sv-card-shadow)">
   <div style="padding:1rem 1.25rem 0.75rem;border-bottom:1px solid var(--sv-border)">
     <div style="font-weight:700;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--sv-muted)">LinkedIn Profile Review</div>
   </div>
@@ -123,14 +123,14 @@ ${diffPanel}`;
 function renderPostLayout(content: string, metadata: ContentMetadata): string {
   const paragraphs = content.split(/\n\n+/).filter(p => p.trim());
   const bodyBlocks = paragraphs.map((para, i) => {
-    const blockId = `block-${i}`;
-    return `<div class="sv-block" data-block-id="${blockId}">
-      <div style="white-space:pre-line;line-height:1.6;font-size:0.95rem">${renderMarkdown(para.trim())}</div>
-      ${blockActions(blockId)}
+    const blockId = scopedBlockId(metadata, `block-${i}`);
+    return `<div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(para.trim())}>
+      <div ${editableDataAttributes(para.trim(), { format: 'markdown', kind: 'paragraph' })} style="white-space:pre-line;line-height:1.6;font-size:0.95rem">${renderMarkdown(para.trim())}</div>
+      ${blockActions(blockId, metadata)}
     </div>`;
   }).join('');
 
-  return `<div class="sv-linkedin" style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;overflow:hidden;max-width:600px;box-shadow:var(--sv-card-shadow)">
+  return `<div class="sv-linkedin" ${copyDataAttributes(content.trim(), { primary: true })} style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;overflow:hidden;max-width:600px;box-shadow:var(--sv-card-shadow)">
   <div style="padding:1.5rem 1.75rem">
     ${bodyBlocks}
   </div>

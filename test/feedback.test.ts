@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import {
   readFeedback,
   addFeedbackItem,
+  deleteFeedbackItem,
   getUnresolvedFeedback,
+  getUnresolvedCommentCount,
   resolveFeedbackItem,
   summarizeFeedback,
 } from '../src/core/feedback.js';
@@ -74,6 +76,43 @@ describe('feedback', () => {
 
     const file = readFeedback(TEST_DIR, 'task-1');
     expect(file!.items[0].resolved).toBe(true);
+  });
+
+  it('deletes a feedback item', () => {
+    addFeedbackItem(TEST_DIR, 'task-1', makeItem({ id: 'fb-delete-1', text: 'Keep' }));
+    addFeedbackItem(TEST_DIR, 'task-1', makeItem({ id: 'fb-delete-2', text: 'Delete me' }));
+
+    deleteFeedbackItem(TEST_DIR, 'task-1', 'fb-delete-2');
+
+    const file = readFeedback(TEST_DIR, 'task-1');
+    expect(file!.items).toHaveLength(1);
+    expect(file!.items[0].id).toBe('fb-delete-1');
+  });
+
+  it('counts only unresolved comment feedback in totals', () => {
+    addFeedbackItem(TEST_DIR, 'task-5', makeItem({ id: 'fb-open-comment', resolved: false }));
+    addFeedbackItem(TEST_DIR, 'task-5', makeItem({ id: 'fb-resolved-comment', resolved: true }));
+    addFeedbackItem(TEST_DIR, 'task-5', {
+      type: 'general_notes',
+      id: 'notes-general',
+      blockId: 'general',
+      version: 1,
+      text: 'Page-level notes',
+      createdAt: new Date().toISOString(),
+      resolved: false,
+    });
+    addFeedbackItem(TEST_DIR, 'task-5', {
+      type: 'content_edit',
+      id: 'edit-block-1',
+      blockId: 'block-1',
+      version: 1,
+      text: 'Edited copy',
+      createdAt: new Date().toISOString(),
+      resolved: false,
+    });
+
+    expect(getUnresolvedCommentCount(TEST_DIR, 'task-5')).toBe(1);
+    expect(getUnresolvedFeedback(TEST_DIR, 'task-5')).toHaveLength(3);
   });
 
   // v0.2 summarizeFeedback tests

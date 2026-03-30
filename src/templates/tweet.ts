@@ -1,5 +1,5 @@
 import type { ContentMetadata } from '../types.js';
-import { escapeHtml, renderMarkdown, plainText, blockActions } from './shared.js';
+import { escapeHtml, renderMarkdown, plainText, blockActions, scopedBlockId, copyDataAttributes, editableDataAttributes } from './shared.js';
 
 interface Variation {
   name: string;
@@ -115,19 +115,19 @@ function renderImageGrid(images: string[]): string {
 }
 
 export function render(content: string, metadata: ContentMetadata): string {
-  const images = (metadata as any).images as string[] | undefined;
+  const images = metadata.images;
   // Skip in-page variation detection if this is a file-linked variant
-  if ((metadata as any).variantOf) {
-    return renderSingleTweet(content, images);
+  if (metadata.variantOf) {
+    return renderSingleTweet(content, images, metadata);
   }
   const result = detectVariations(content);
   if (result && result.variations.length >= 2) {
-    return renderVariations(result, images);
+    return renderVariations(result, images, metadata);
   }
-  return renderSingleTweet(content, images);
+  return renderSingleTweet(content, images, metadata);
 }
 
-function renderSingleTweet(content: string, images?: string[]): string {
+function renderSingleTweet(content: string, images?: string[], metadata: ContentMetadata = {}): string {
   const charCount = plainText(content).length;
 
   // Long-form tweets (X Premium allows up to 25,000 chars)
@@ -156,22 +156,23 @@ function renderSingleTweet(content: string, images?: string[]): string {
   let contentBlocks: string;
   if (useBlocks) {
     contentBlocks = sentences.map((sentence, i) => {
-      const blockId = `block-${i}`;
-      return `<div class="sv-block" data-block-id="${blockId}">
-    <p style="margin:0;font-size:1.05rem;line-height:1.6;${textStyle}">${renderMarkdown(sentence.trim())}</p>
-    ${blockActions(blockId)}
+      const blockId = scopedBlockId(metadata, `block-${i}`);
+      return `<div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(sentence.trim())}>
+    <p ${editableDataAttributes(sentence.trim(), { format: 'markdown', kind: 'paragraph' })} style="margin:0;font-size:1.05rem;line-height:1.6;${textStyle}">${renderMarkdown(sentence.trim())}</p>
+    ${blockActions(blockId, metadata)}
   </div>`;
     }).join('');
   } else {
-    contentBlocks = `<div class="sv-block" data-block-id="block-0">
-    <p style="margin:0;font-size:1.05rem;line-height:1.6;${textStyle}">${renderMarkdown(content.trim()).replace(/\n/g, '<br>')}</p>
-    ${blockActions('block-0')}
+    const blockId = scopedBlockId(metadata, 'block-0');
+    contentBlocks = `<div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(content.trim())}>
+    <p ${editableDataAttributes(content.trim(), { format: 'markdown', kind: 'paragraph' })} style="margin:0;font-size:1.05rem;line-height:1.6;${textStyle}">${renderMarkdown(content.trim()).replace(/\n/g, '<br>')}</p>
+    ${blockActions(blockId, metadata)}
   </div>`;
   }
 
   const imageHtml = renderImageGrid(images || []);
 
-  return `<div class="sv-tweet" style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;padding:1.5rem 1.75rem;max-width:600px;box-shadow:var(--sv-card-shadow)">
+  return `<div class="sv-tweet" ${copyDataAttributes(content.trim(), { primary: true })} style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;padding:1.5rem 1.75rem;max-width:600px;box-shadow:var(--sv-card-shadow)">
   ${contentBlocks}
   ${imageHtml}
   <div style="text-align:right;margin-top:0.75rem">
@@ -180,20 +181,24 @@ function renderSingleTweet(content: string, images?: string[]): string {
 </div>`;
 }
 
-function renderVariations(result: VariationResult, images?: string[]): string {
+function renderVariations(result: VariationResult, images?: string[], metadata: ContentMetadata = {}): string {
   const { variations, craftNotes } = result;
 
   // Build tab bar
   const tabs = variations.map((v, i) => {
     const activeClass = i === 0 ? ' active' : '';
     const star = v.recommended ? '<span class="sv-star">&#9733;</span>' : '';
-    return `<button class="sv-variation-tab${activeClass}" data-idx="${i}">${star}${escapeHtml(v.name)}</button>`;
+    const tabBlockId = scopedBlockId(metadata, `variation-tab-${i}`);
+    return `<button class="sv-variation-tab${activeClass}" data-idx="${i}" data-block-id="${tabBlockId}">${star}${escapeHtml(v.name)}</button>`;
   }).join('');
 
   // Build panels - each is a full tweet card
   const panels = variations.map((v, i) => {
     const activeClass = i === 0 ? ' active' : '';
-    const tweetHtml = renderSingleTweet(v.content, images);
+    const tweetHtml = renderSingleTweet(v.content, images, {
+      ...metadata,
+      blockIdPrefix: `${metadata.blockIdPrefix || ''}var-${i}-`,
+    });
     return `<div class="sv-variation-panel${activeClass}" data-panel="${i}">${tweetHtml}</div>`;
   }).join('');
 

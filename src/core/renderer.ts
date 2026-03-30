@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import type {
   ContentType,
   RenderOptions,
@@ -10,7 +10,9 @@ import type {
 import { buildHtml, type TemplateOptions } from './template.js';
 import { computeDiff, renderDiffHtml } from './diff.js';
 import { detectContentType } from './detector.js';
-import { readHistory } from './history.js';
+import { getHistoryDataPayload, getHistoryForTask, readHistory } from './history.js';
+import { getUnresolvedCommentCountsByVersion, readFeedback } from './feedback.js';
+import { containsArtifactNoise, extractContentArea, htmlToPlainText, sanitizeRenderedContentHtml } from './content-artifacts.js';
 
 // Template registry - lazy imports
 type TemplateRenderer = (content: string, metadata: ContentMetadata) => string;
@@ -39,84 +41,49 @@ const typeLabels: Record<ContentType, string> = {
   generic: 'Article',
 };
 
+const SUPERVIEW_DIR = process.env.SUPERVIEW_DIR || '.superview';
 export async function render(content: string, options: RenderOptions = {}): Promise<string> {
   const type = options.type || detectContentType(content);
   const title = options.title || generateTitle(content, type);
   const theme = options.theme || 'auto';
-  const metadata: ContentMetadata = { ...(options.metadata || {}) };
+  const version = options.version || 1;
+  const taskId = options.taskId || generateTaskId();
+  const basePath = options.basePath || process.cwd();
+  const metadata: ContentMetadata = {
+    ...(options.metadata || {}),
+    title,
+    blockIdPrefix: options.metadata?.blockIdPrefix || `v${version}-`,
+  };
 
   // Merge images from options into metadata
   if (options.images && options.images.length > 0) {
     metadata.images = options.images;
   }
-  const version = options.version || 1;
-  const taskId = options.taskId || generateTaskId();
-  const basePath = options.basePath || process.cwd();
 
   // Get the content-type-specific renderer
   const getRenderer = templateRenderers[type];
   const templateRender = await getRenderer();
   const contentHtml = templateRender(content, metadata);
+  const versionFeedbackCounts = getUnresolvedCommentCountsByVersion(basePath, taskId);
 
-  // Build version data
-  const versions: VersionData[] = [];
-  if (version > 1 && options.previousContent) {
-    // Previous version rendered with its own block wrappers for independent feedback
-    const prevHtml = templateRender(options.previousContent, metadata);
-    versions.push({
-      version: version - 1,
-      content: prevHtml,
-      renderedAt: new Date().toISOString(),
-      feedbackCount: 0,
-    });
-  }
+  // Build version data from full task history, falling back to explicit previous content only
+  const versions: VersionData[] = buildVersionHistory({
+    basePath,
+    taskId,
+    currentVersion: version,
+    currentContentHtml: contentHtml,
+    currentRenderedAt: new Date().toISOString(),
+    previousContent: options.previousContent,
+    templateRender,
+    metadata,
+    versionFeedbackCounts,
+  });
   // Compute diff if we have previous content
   let diffHtml: string | undefined;
   if (options.previousContent) {
     const segments = computeDiff(options.previousContent, content);
     diffHtml = renderDiffHtml(segments);
   }
-
-  // Best-effort: try to find previousContent from history if not provided
-  if (!options.previousContent && !options.noSidebar) {
-    try {
-      const allHistory = readHistory(basePath);
-      // Find entries with same title, sorted newest first
-      const sameTitle = allHistory.filter(e =>
-        e.title === title && e.taskId !== taskId
-      );
-      if (sameTitle.length > 0) {
-        // Try to read the most recent previous entry's content file
-        const prevEntry = sameTitle[0];
-        const prevContentPath = join(basePath, '.superview', 'content', `${prevEntry.taskId}.txt`);
-        if (existsSync(prevContentPath)) {
-          const prevContent = readFileSync(prevContentPath, 'utf-8');
-          if (prevContent !== content) {  // Only show if actually different
-            const prevHtml = templateRender(prevContent, metadata);
-            versions.push({
-              version: version - 1,
-              content: prevHtml,
-              renderedAt: prevEntry.updatedAt || new Date().toISOString(),
-              feedbackCount: 0,
-            });
-            // Also compute diff for later use
-            const segments = computeDiff(prevContent, content);
-            diffHtml = renderDiffHtml(segments);
-          }
-        }
-      }
-    } catch {
-      // Best-effort, ignore failures
-    }
-  }
-
-  // Latest version (renders fully at top, not inside an accordion)
-  versions.push({
-    version,
-    content: contentHtml,
-    renderedAt: new Date().toISOString(),
-    feedbackCount: 0,
-  });
 
   // Read history for sidebar
   let history: HistoryEntry[] = [];
@@ -127,6 +94,8 @@ export async function render(content: string, options: RenderOptions = {}): Prom
       // No history yet, that's fine
     }
   }
+
+  const feedbackItems = readFeedback(basePath, taskId)?.items || [];
 
   const templateOptions: TemplateOptions = {
     title,
@@ -142,9 +111,133 @@ export async function render(content: string, options: RenderOptions = {}): Prom
     feedbackEnabled: true,
     attribution: true,
     todayPagePath: '_today.html',
+    commentMode: options.commentMode,
+    feedbackItems,
+    basePath,
+    historyData: getHistoryDataPayload(basePath),
+    canonicalContentManaged: true,
   };
 
   return buildHtml(templateOptions);
+}
+
+function buildVersionHistory(options: {
+  basePath: string;
+  taskId: string;
+  currentVersion: number;
+  currentContentHtml: string;
+  currentRenderedAt: string;
+  previousContent?: string;
+  templateRender: TemplateRenderer;
+  metadata: ContentMetadata;
+  versionFeedbackCounts: Map<number, number>;
+}): VersionData[] {
+  const {
+    basePath,
+    taskId,
+    currentVersion,
+    currentContentHtml,
+    currentRenderedAt,
+    previousContent,
+    templateRender,
+    metadata,
+    versionFeedbackCounts,
+  } = options;
+
+  const historyEntries = getHistoryForTask(basePath, taskId)
+    .filter((entry) => (entry.versions || 0) < currentVersion)
+    .slice()
+    .sort((a, b) => {
+      const versionDelta = (a.versions || 0) - (b.versions || 0);
+      if (versionDelta !== 0) return versionDelta;
+      return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+    });
+
+  const latestByVersion = new Map<number, HistoryEntry>();
+  for (const entry of historyEntries.slice().sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())) {
+    const version = entry.versions || 1;
+    if (!latestByVersion.has(version)) {
+      latestByVersion.set(version, entry);
+    }
+  }
+
+  const uniqueHistoryEntries = Array.from(latestByVersion.values()).sort((a, b) => {
+    const versionDelta = (a.versions || 0) - (b.versions || 0);
+    if (versionDelta !== 0) return versionDelta;
+    return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+  });
+
+  const versions: VersionData[] = uniqueHistoryEntries.map((entry) => ({
+    version: entry.versions,
+    content: readHistoricalVersionContent(basePath, entry.filePath, entry.versions, templateRender, metadata),
+    renderedAt: entry.updatedAt,
+    feedbackCount: versionFeedbackCounts.get(entry.versions) || 0,
+  }));
+
+  if (versions.length === 0 && currentVersion > 1 && previousContent) {
+    const fallbackVersion = currentVersion - 1;
+    versions.push({
+      version: fallbackVersion,
+      content: templateRender(previousContent, {
+        ...metadata,
+        blockIdPrefix: `v${fallbackVersion}-`,
+        interactive: false,
+      }),
+      renderedAt: currentRenderedAt,
+      feedbackCount: versionFeedbackCounts.get(fallbackVersion) || 0,
+    });
+  }
+
+  versions.push({
+    version: currentVersion,
+    content: currentContentHtml,
+    renderedAt: currentRenderedAt,
+    feedbackCount: versionFeedbackCounts.get(currentVersion) || 0,
+  });
+
+  return versions;
+}
+
+function readHistoricalVersionContent(
+  basePath: string,
+  filePath: string,
+  version: number,
+  templateRender: TemplateRenderer,
+  metadata: ContentMetadata,
+): string {
+  const resolvedPath = resolveHistoryArtifactPath(basePath, filePath);
+  if (!resolvedPath || !existsSync(resolvedPath)) {
+    return renderUnavailableVersion(version);
+  }
+
+  try {
+    const html = readFileSync(resolvedPath, 'utf-8');
+    const contentHtml = extractContentArea(html);
+    if (!contentHtml) return renderUnavailableVersion(version);
+
+    const sanitizedHtml = sanitizeRenderedContentHtml(contentHtml);
+    if (containsArtifactNoise(sanitizedHtml)) {
+      return templateRender(htmlToPlainText(sanitizedHtml), {
+        ...metadata,
+        blockIdPrefix: `v${version}-`,
+        interactive: false,
+      });
+    }
+
+    return sanitizedHtml;
+  } catch {
+    return renderUnavailableVersion(version);
+  }
+}
+
+function resolveHistoryArtifactPath(basePath: string, filePath: string): string | null {
+  if (!filePath) return null;
+  if (isAbsolute(filePath)) return filePath;
+  return join(basePath, SUPERVIEW_DIR, 'views', basename(filePath));
+}
+
+function renderUnavailableVersion(version: number): string {
+  return `<div class="sv-version-unavailable">Historical preview unavailable for v${version}.</div>`;
 }
 
 function generateTitle(content: string, type: ContentType): string {

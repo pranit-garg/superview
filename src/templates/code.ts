@@ -1,5 +1,5 @@
 import type { ContentMetadata } from '../types.js';
-import { escapeHtml, blockActions } from './shared.js';
+import { escapeHtml, blockActions, scopedBlockId, copyDataAttributes } from './shared.js';
 
 function highlightSyntax(escaped: string): string {
   // Comments (// and # style, already escaped)
@@ -51,11 +51,12 @@ export function render(content: string, metadata: ContentMetadata): string {
     ${language && filename ? `<span style="color:#858585">${escapeHtml(language)}</span>` : ''}
   </div>` : '';
 
-  return `<div class="sv-code" style="background:#1e1e1e;color:#d4d4d4;border-radius:8px;overflow:hidden;box-shadow:var(--sv-card-shadow)">
+  const blockId = scopedBlockId(metadata, 'block-0');
+  return `<div class="sv-code" ${copyDataAttributes(code, { primary: true })} style="background:#1e1e1e;color:#d4d4d4;border-radius:8px;overflow:hidden;box-shadow:var(--sv-card-shadow)">
   ${labelHtml}
-  <div class="sv-block" data-block-id="block-0" style="padding:1rem;font-size:0.85rem;line-height:1.6;overflow-x:auto">
+  <div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(code)} style="padding:1rem;font-size:0.85rem;line-height:1.6;overflow-x:auto">
     <pre style="margin:0;font-family:inherit">${codeLines}</pre>
-    ${blockActions('block-0')}
+    ${blockActions(blockId, metadata)}
   </div>
 </div>`;
 }
