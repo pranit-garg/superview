@@ -1,4 +1,5 @@
 import type { ContentMetadata } from '../types.js';
+import { escapeHtml, renderMarkdown, blockActions, scopedBlockId, copyDataAttributes, editableDataAttributes } from './shared.js';
 
 const LINKEDIN_SECTIONS = ['About', 'Experience', 'Education', 'Skills', 'Featured'] as const;
 
@@ -9,23 +10,7 @@ interface ParsedSection {
   content: string;
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function blockActions(id: string): string {
-  return `<div class="sv-block-actions">
-  <button class="sv-block-action" onclick="openBlockComment('${id}')" title="Comment">&#128172;</button>
-  <button class="sv-block-action" onclick="react('${id}','thumbs_up')" title="Like">&#128077;</button>
-  <button class="sv-block-action" onclick="react('${id}','thumbs_down')" title="Dislike">&#128078;</button>
-</div>
-<div class="sv-feedback-input" data-block="${id}">
-  <textarea class="sv-feedback-textarea" placeholder="Add comment..."></textarea>
-  <button class="sv-feedback-submit" onclick="submitBlockComment('${id}')">Submit</button>
-</div>`;
-}
-
-function isProfileContent(content: string): boolean {
+export function isProfileContent(content: string): boolean {
   const headers = content.match(/^## .+$/gm) || [];
   const matchCount = headers.filter((h) => {
     const name = h.replace(/^## /, '').trim();
@@ -34,7 +19,7 @@ function isProfileContent(content: string): boolean {
   return matchCount >= 2;
 }
 
-function parseSections(content: string): ParsedSection[] {
+export function parseSections(content: string): ParsedSection[] {
   const sections: ParsedSection[] = [];
   const lines = content.split('\n');
   let currentSection: ParsedSection | null = null;
@@ -101,23 +86,21 @@ function renderDiffSideBySide(current: string, proposed: string): string {
 }
 
 function renderProfileLayout(content: string, metadata: ContentMetadata): string {
-  const handle = metadata.handle || 'User';
-  const initial = handle.replace('@', '').charAt(0).toUpperCase();
   const sections = parseSections(content);
 
-  const currentContent = (metadata as ContentMetadata & { currentContent?: string }).currentContent;
+  const currentContent = metadata.currentContent;
   const hasDiff = typeof currentContent === 'string' && currentContent.length > 0;
 
   const sectionCards = sections.map((section, i) => {
-    const blockId = `section-${i}`;
+    const blockId = scopedBlockId(metadata, `section-${i}`);
     const isAbout = section.name.toLowerCase() === 'about';
     const charCount = isAbout ? aboutCharCount(section.content) : '';
 
-    return `<div class="sv-block" data-block-id="${blockId}" style="padding:1rem;border-bottom:1px solid var(--sv-border)">
+    return `<div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(section.content.trim())} style="padding:1rem;border-bottom:1px solid var(--sv-border)">
       <div style="font-weight:700;font-size:1rem;margin-bottom:0.5rem">${escapeHtml(section.name)}</div>
-      <div style="white-space:pre-line;line-height:1.6;font-size:0.925rem">${escapeHtml(section.content)}</div>
+      <div ${editableDataAttributes(section.content, { format: 'markdown', kind: 'paragraph' })} style="white-space:pre-line;line-height:1.6;font-size:0.925rem">${renderMarkdown(section.content)}</div>
       ${charCount}
-      ${blockActions(blockId)}
+      ${blockActions(blockId, metadata)}
     </div>`;
   }).join('');
 
@@ -128,13 +111,9 @@ function renderProfileLayout(content: string, metadata: ContentMetadata): string
       </div>`
     : '';
 
-  return `<div class="sv-linkedin-profile" style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:8px;overflow:hidden;max-width:650px;box-shadow:var(--sv-card-shadow)">
-  <div style="padding:1rem 1rem 0.75rem;display:flex;align-items:center;gap:0.625rem;border-bottom:1px solid var(--sv-border)">
-    <div style="width:56px;height:56px;border-radius:50%;background:var(--sv-accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1.25rem;flex-shrink:0">${initial}</div>
-    <div>
-      <div style="font-weight:700;font-size:1.05rem">${escapeHtml(handle.replace('@', ''))}</div>
-      <div style="color:var(--sv-muted);font-size:0.8rem">LinkedIn Profile Review</div>
-    </div>
+  return `<div class="sv-linkedin-profile" ${copyDataAttributes(content.trim(), { primary: true })} style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;overflow:hidden;max-width:650px;box-shadow:var(--sv-card-shadow)">
+  <div style="padding:1rem 1.25rem 0.75rem;border-bottom:1px solid var(--sv-border)">
+    <div style="font-weight:700;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--sv-muted)">LinkedIn Profile Review</div>
   </div>
   ${sectionCards}
 </div>
@@ -142,34 +121,18 @@ ${diffPanel}`;
 }
 
 function renderPostLayout(content: string, metadata: ContentMetadata): string {
-  const handle = metadata.handle || 'User';
-  const initial = handle.replace('@', '').charAt(0).toUpperCase();
-
   const paragraphs = content.split(/\n\n+/).filter(p => p.trim());
   const bodyBlocks = paragraphs.map((para, i) => {
-    const blockId = `block-${i}`;
-    return `<div class="sv-block" data-block-id="${blockId}" style="padding:0 0 0.5rem 0">
-      <div style="white-space:pre-line;line-height:1.6;font-size:0.925rem">${escapeHtml(para.trim())}</div>
-      ${blockActions(blockId)}
+    const blockId = scopedBlockId(metadata, `block-${i}`);
+    return `<div class="sv-block" data-block-id="${blockId}" ${copyDataAttributes(para.trim())}>
+      <div ${editableDataAttributes(para.trim(), { format: 'markdown', kind: 'paragraph' })} style="white-space:pre-line;line-height:1.6;font-size:0.95rem">${renderMarkdown(para.trim())}</div>
+      ${blockActions(blockId, metadata)}
     </div>`;
   }).join('');
 
-  return `<div class="sv-linkedin" style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:8px;overflow:hidden;max-width:550px;box-shadow:var(--sv-card-shadow)">
-  <div style="padding:1rem 1rem 0.75rem;display:flex;align-items:center;gap:0.625rem">
-    <div style="width:48px;height:48px;border-radius:50%;background:var(--sv-accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1.1rem;flex-shrink:0">${initial}</div>
-    <div>
-      <div style="font-weight:600;font-size:0.95rem">${escapeHtml(handle.replace('@', ''))}</div>
-      <div style="color:var(--sv-muted);font-size:0.75rem">${metadata.timestamp || 'Just now'}</div>
-    </div>
-  </div>
-  <div style="padding:0.5rem 1rem 1rem">
+  return `<div class="sv-linkedin" ${copyDataAttributes(content.trim(), { primary: true })} style="background:var(--sv-surface);border:1px solid var(--sv-border);border-radius:12px;overflow:hidden;max-width:600px;box-shadow:var(--sv-card-shadow)">
+  <div style="padding:1.5rem 1.75rem">
     ${bodyBlocks}
-  </div>
-  <div style="border-top:1px solid var(--sv-border);padding:0.5rem 1rem;display:flex;justify-content:space-around;color:var(--sv-muted);font-size:0.8rem;font-weight:500">
-    <span style="cursor:pointer;padding:0.35rem 0.5rem;border-radius:4px;transition:background 0.15s">&#128077; Like</span>
-    <span style="cursor:pointer;padding:0.35rem 0.5rem;border-radius:4px;transition:background 0.15s">&#128172; Comment</span>
-    <span style="cursor:pointer;padding:0.35rem 0.5rem;border-radius:4px;transition:background 0.15s">&#128257; Repost</span>
-    <span style="cursor:pointer;padding:0.35rem 0.5rem;border-radius:4px;transition:background 0.15s">&#9993; Send</span>
   </div>
 </div>`;
 }

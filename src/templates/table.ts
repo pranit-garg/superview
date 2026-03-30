@@ -1,20 +1,5 @@
 import type { ContentMetadata } from '../types.js';
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function blockActions(id: string): string {
-  return `<div class="sv-block-actions">
-  <button class="sv-block-action" onclick="openBlockComment('${id}')" title="Comment">&#128172;</button>
-  <button class="sv-block-action" onclick="react('${id}','thumbs_up')" title="Like">&#128077;</button>
-  <button class="sv-block-action" onclick="react('${id}','thumbs_down')" title="Dislike">&#128078;</button>
-</div>
-<div class="sv-feedback-input" data-block="${id}">
-  <textarea class="sv-feedback-textarea" placeholder="Add comment..."></textarea>
-  <button class="sv-feedback-submit" onclick="submitBlockComment('${id}')">Submit</button>
-</div>`;
-}
+import { escapeHtml, blockActions, scopedBlockId, copyDataAttributes } from './shared.js';
 
 function parsePipeTable(content: string): { headers: string[]; rows: string[][] } | null {
   const lines = content.trim().split('\n').filter(l => l.trim());
@@ -76,10 +61,11 @@ export function render(content: string, metadata: ContentMetadata): string {
   if (!tableData) tableData = parseJsonArray(content);
 
   if (!tableData) {
+    const blockId = scopedBlockId(metadata, 'block-0');
     // Fallback: render as pre-formatted text
-    return `<div class="sv-table sv-block" data-block-id="block-0" style="overflow-x:auto">
+    return `<div class="sv-table sv-block" data-block-id="${blockId}" ${copyDataAttributes(content.trim(), { primary: true })} style="overflow-x:auto">
   <pre style="font-size:0.9rem;line-height:1.6;margin:0">${escapeHtml(content)}</pre>
-  ${blockActions('block-0')}
+  ${blockActions(blockId, metadata)}
 </div>`;
   }
 
@@ -93,7 +79,7 @@ export function render(content: string, metadata: ContentMetadata): string {
   ).join('');
 
   const bodyRows = rows.map((row, i) => {
-    const blockId = `block-${i}`;
+    const blockId = scopedBlockId(metadata, `block-${i}`);
     const bgColor = i % 2 === 1 ? 'background:var(--sv-bg)' : '';
     const cells = row.map(cell =>
       `<td style="padding:0.5rem 0.75rem;font-size:0.9rem;border-bottom:1px solid var(--sv-border)">${escapeHtml(cell)}</td>`
@@ -104,13 +90,14 @@ export function render(content: string, metadata: ContentMetadata): string {
   }).join('');
 
   // Block actions on the whole table
-  return `<div class="sv-table" style="overflow-x:auto;border:1px solid var(--sv-border);border-radius:8px;box-shadow:var(--sv-card-shadow)">
-  <div class="sv-block" data-block-id="block-table" style="padding:0">
+  const tableBlockId = scopedBlockId(metadata, 'block-table');
+  return `<div class="sv-table" ${copyDataAttributes(content.trim(), { primary: true })} style="overflow-x:auto;border:1px solid var(--sv-border);border-radius:8px;box-shadow:var(--sv-card-shadow)">
+  <div class="sv-block" data-block-id="${tableBlockId}" style="padding:0">
     <table style="width:100%;border-collapse:collapse;min-width:400px">
       <thead><tr>${headerCells}</tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
-    ${blockActions('block-table')}
+    ${blockActions(tableBlockId, metadata)}
   </div>
 </div>`;
 }

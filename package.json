@@ -1,6 +1,6 @@
 {
   "name": "superview",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Render AI output as beautiful, reviewable HTML with feedback and iteration",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -24,11 +24,12 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "lint": "tsc --noEmit"
   },
   "keywords": [
     "ai",

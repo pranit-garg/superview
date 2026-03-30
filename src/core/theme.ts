@@ -11,6 +11,8 @@ export const THEMES = {
     border: 'rgba(28, 28, 26, 0.1)',
     selection: 'rgba(42, 112, 71, 0.15)',
     cardShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    interactive: '#2A7047',
+    danger: '#C0392B',
   },
   night: {
     bg: '#080810',
@@ -20,8 +22,10 @@ export const THEMES = {
     text: '#EDE8E0',
     muted: '#908878',
     border: 'rgba(237, 232, 224, 0.08)',
-    selection: 'rgba(212, 48, 48, 0.25)',
+    selection: 'rgba(212, 152, 40, 0.20)',
     cardShadow: '0 1px 3px rgba(0,0,0,0.3)',
+    interactive: '#D49828',
+    danger: '#D43030',
   },
 } as const;
 
@@ -37,6 +41,8 @@ export function getThemeCSS(): string {
       --sv-border: ${THEMES.day.border};
       --sv-selection: ${THEMES.day.selection};
       --sv-card-shadow: ${THEMES.day.cardShadow};
+      --sv-interactive: ${THEMES.day.interactive};
+      --sv-danger: ${THEMES.day.danger};
     }
     html.night {
       --sv-bg: ${THEMES.night.bg};
@@ -48,6 +54,8 @@ export function getThemeCSS(): string {
       --sv-border: ${THEMES.night.border};
       --sv-selection: ${THEMES.night.selection};
       --sv-card-shadow: ${THEMES.night.cardShadow};
+      --sv-interactive: ${THEMES.night.interactive};
+      --sv-danger: ${THEMES.night.danger};
     }
   `;
 }
@@ -55,28 +63,42 @@ export function getThemeCSS(): string {
 export function getThemeScript(mode: ThemeMode): string {
   return `
     (function() {
-      var stored = localStorage.getItem('sv-theme');
+      function setTheme(theme) {
+        document.documentElement.classList.remove('day', 'night');
+        document.documentElement.classList.add(theme);
+        window.__svTheme = theme;
+      }
+      var stored = null;
+      try {
+        stored = localStorage.getItem('sv-theme');
+      } catch (_) {}
       var theme = stored || '${mode === 'auto' ? 'auto' : mode}';
       if (theme === 'auto') {
         var hour = new Date().getHours();
         theme = (hour >= 18 || hour < 6) ? 'night' : 'day';
       }
-      document.documentElement.className = theme;
-      window.__svTheme = theme;
+      setTheme(theme);
     })();
   `;
 }
 
 export function getThemeToggleScript(): string {
   return `
+    function setTheme(theme) {
+      document.documentElement.classList.remove('day', 'night');
+      document.documentElement.classList.add(theme);
+      window.__svTheme = theme;
+    }
+
     function toggleTheme() {
-      var current = document.documentElement.className;
+      var current = document.documentElement.classList.contains('night') ? 'night' : 'day';
       var next = current === 'day' ? 'night' : 'day';
-      document.documentElement.className = next;
-      window.__svTheme = next;
-      localStorage.setItem('sv-theme', next);
-      var btn = document.getElementById('sv-theme-toggle');
-      if (btn) btn.textContent = next === 'day' ? '\\u263E' : '\\u2600';
+      setTheme(next);
+      try {
+        localStorage.setItem('sv-theme', next);
+      } catch (_) {}
+      var lbl = document.getElementById('sv-toolbar-theme-label');
+      if (lbl) lbl.textContent = next === 'day' ? 'Night' : 'Day';
     }
   `;
 }
