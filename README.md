@@ -9,15 +9,18 @@ Beautiful preview and feedback for AI-generated content. Tweets look like tweets
 ## Quick Start
 
 ```bash
-npx superview "Your AI-generated text here"
+npm install -g superview
+superview "Your AI-generated text here"
 ```
 
 That's it. Your content opens in the browser as styled, reviewable HTML.
 
+If you do not want a global install, `npx superview "Your AI-generated text here"` works too.
+
 ## Works with Claude Code
 
 ```bash
-npx superview setup-claude
+superview setup-claude
 ```
 
 Superview auto-triggers when Claude creates content. Write a tweet, email, or document, and it renders instantly for review. Open the generated HTML file directly, leave comments in the browser, then read them back with `superview inbox --latest --json` (or `review` / `feedback` for compatibility). `superview serve` is optional live sync, not the default review path.

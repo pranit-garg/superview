@@ -41,6 +41,11 @@ function getFontLinks(): string {
   `;
 }
 
+function getFaviconLink(): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#161412"/><path d="M19 46V18h26v6H26v5h17v6H26v11z" fill="#D49828"/></svg>`;
+  return `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(svg)}">`;
+}
+
 export function buildHtml(options: TemplateOptions): string {
   const {
     title,
@@ -81,7 +86,7 @@ export function buildHtml(options: TemplateOptions): string {
         return `
         <div class="sv-accordion" data-version="${v.version}">
           <div class="sv-accordion-row">
-            <button class="sv-accordion-header" onclick="toggleAccordion(this)">
+            <button type="button" class="sv-accordion-header" onclick="toggleAccordion(this)">
               <svg class="sv-accordion-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
@@ -90,7 +95,7 @@ export function buildHtml(options: TemplateOptions): string {
                 <span class="sv-accordion-meta">${escapeHtml(date)}${v.feedbackCount > 0 ? ` &middot; ${v.feedbackCount} comment${v.feedbackCount !== 1 ? 's' : ''}` : ''}</span>
               </span>
             </button>
-            <button class="sv-accordion-copy" onclick="copyVersionContent(this, event)" title="Copy text">Copy</button>
+            <button type="button" class="sv-accordion-copy" onclick="copyVersionContent(this, event)" title="Copy text">Copy</button>
           </div>
           <div class="sv-accordion-content">
             <div class="sv-accordion-content-inner">
@@ -111,6 +116,7 @@ export function buildHtml(options: TemplateOptions): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)} | Superview</title>
+  ${getFaviconLink()}
   <script>${getThemeScript(theme)}</script>
   ${withFonts ? getFontLinks() : ''}
   <script src="_history-data.js${basePath ? `?base=${encodeURIComponent(basePath)}` : ''}"></script>
@@ -961,6 +967,7 @@ export function buildHtml(options: TemplateOptions): string {
       gap: 0.25rem;
     }
     .sv-selection-toolbar.visible { display: flex; }
+    body.sv-comment-panel-open .sv-selection-toolbar { display: none !important; }
     .sv-selection-toolbar-btn {
       border: 1px solid var(--sv-border);
       background: transparent;
@@ -1633,6 +1640,21 @@ export function buildHtml(options: TemplateOptions): string {
         transform: translateY(100%);
       }
       .sv-comment-panel.open { transform: translateY(0); }
+      .sv-selection-toolbar {
+        position: fixed;
+        left: 0.75rem;
+        right: 0.75rem;
+        top: auto !important;
+        bottom: 0.75rem;
+        width: auto;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        padding: 0.4rem;
+      }
+      .sv-selection-toolbar-btn {
+        flex: 1 1 88px;
+      }
       .sv-block-comment-btn {
         position: static;
         opacity: 1;
@@ -1650,6 +1672,7 @@ export function buildHtml(options: TemplateOptions): string {
         width: auto !important;
         max-height: 52vh;
         overflow-y: auto;
+        padding-bottom: calc(0.9rem + env(safe-area-inset-bottom, 0px));
       }
       .sv-inline-review-card-actions {
         flex-direction: column;
@@ -2204,7 +2227,7 @@ export function buildHtml(options: TemplateOptions): string {
     }
     window.__svBasePath = ${JSON.stringify(basePath)};
     window.__svServedMode = false;
-    window.__svRuntimeVersion = 6;
+    window.__svRuntimeVersion = 7;
     window.__svCanonicalContentManaged = ${canonicalContentManaged ? 'true' : 'false'};
     window.__svTaskId = '${taskId}';
     window.__svClientId = window.__svClientId || ('sv-client-' + Math.random().toString(36).slice(2, 10));
@@ -2257,6 +2280,10 @@ export function buildHtml(options: TemplateOptions): string {
     function decodeCopyText(value) {
       if (!value) return '';
       try { return decodeURIComponent(value); } catch { return value; }
+    }
+
+    function normalizeClipboardText(text) {
+      return String(text || '').replace(/\\r\\n?/g, '\\n');
     }
 
     function getFallbackCopyText(node) {
@@ -2319,7 +2346,7 @@ export function buildHtml(options: TemplateOptions): string {
     function fallbackCopyText(text) {
       try {
         var textarea = document.createElement('textarea');
-        textarea.value = text;
+        textarea.value = normalizeClipboardText(text);
         textarea.setAttribute('readonly', 'true');
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
@@ -2339,8 +2366,8 @@ export function buildHtml(options: TemplateOptions): string {
     }
 
     function copyTextValue(text, btn, successText) {
-      if (!text) return Promise.resolve(false);
-      var normalized = String(text || '').replace(/\\r\\n?/g, '\\n').trim();
+      var normalized = normalizeClipboardText(text);
+      if (!normalized.trim()) return Promise.resolve(false);
       var copyPromise = (navigator.clipboard && typeof navigator.clipboard.writeText === 'function')
         ? navigator.clipboard.writeText(normalized).then(function() { return true; }).catch(function() { return fallbackCopyText(normalized); })
         : Promise.resolve(fallbackCopyText(normalized));
@@ -2387,7 +2414,7 @@ export function buildHtml(options: TemplateOptions): string {
       var inner = accordion.querySelector('.sv-accordion-content-inner');
       if (!inner) return;
       var text = getCopyTextFromNode(inner);
-      copyTextValue((text || '').trim(), btn, '\u2713');
+      copyTextValue(text || '', btn, '\u2713');
     }
 
     // Shared page state
@@ -2522,8 +2549,8 @@ export function buildHtml(options: TemplateOptions): string {
 
     function saveFeedback(item) {
       upsertFeedbackItem(item);
-      persistReviewBundle().then(function() {
-        if (reviewPersistenceMode === 'served') tryServerSync(item);
+      return persistReviewBundle().then(function() {
+        return syncReviewItemToServer(item);
       });
     }
 
@@ -2969,31 +2996,54 @@ export function buildHtml(options: TemplateOptions): string {
       });
     }
 
-    function tryServerSync(item) {
-      if (reviewPersistenceMode !== 'served') return Promise.resolve();
-      checkServerAvailability().then(function(available) {
-        if (!available) return;
+    function markReviewAsBrowserOnly() {
+      reviewPersistenceMode = 'export';
+      updateReviewStatus('Review saved in this browser. Export to share.', 'unsynced');
+    }
+
+    function syncReviewItemToServer(item) {
+      if (reviewPersistenceMode !== 'served') {
+        return Promise.resolve({ synced: reviewPersistenceMode === 'filesystem', localFallback: reviewPersistenceMode !== 'filesystem' });
+      }
+      return checkServerAvailability().then(function(available) {
+        if (!available) {
+          markReviewAsBrowserOnly();
+          return { synced: false, localFallback: true };
+        }
         return fetch(serverBase + '/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId: '${taskId}', item: item, basePath: window.__svBasePath || '' })
+        }).then(function(res) {
+          if (!res.ok) throw new Error('Live sync failed');
+          return { synced: true, localFallback: false };
         });
       }).catch(function() {
+        markReviewAsBrowserOnly();
         checkServerAvailability(true);
+        return { synced: false, localFallback: true };
       });
     }
 
-    function tryServerDelete(itemId) {
-      if (reviewPersistenceMode !== 'served') return Promise.resolve();
-      checkServerAvailability().then(function(available) {
-        if (!available) return;
+    function deleteReviewItemFromServer(itemId) {
+      if (reviewPersistenceMode !== 'served') return Promise.resolve(reviewPersistenceMode === 'filesystem');
+      return checkServerAvailability().then(function(available) {
+        if (!available) {
+          markReviewAsBrowserOnly();
+          return false;
+        }
         return fetch(serverBase + '/feedback/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ taskId: '${taskId}', itemId: itemId, basePath: window.__svBasePath || '' })
+        }).then(function(res) {
+          if (!res.ok) throw new Error('Live delete sync failed');
+          return true;
         });
       }).catch(function() {
+        markReviewAsBrowserOnly();
         checkServerAvailability(true);
+        return false;
       });
     }
 
@@ -3033,13 +3083,26 @@ export function buildHtml(options: TemplateOptions): string {
     }
 
     function persistTaskRename(taskId, basePath, newTitle) {
+      function saveRenameLocally() {
+        reviewPersistenceMode = 'export';
+        updateReviewStatus('Live sync unavailable. Rename saved locally.', 'unsynced');
+        return persistReviewBundle({ renameTitle: newTitle }).then(function() {
+          return { ok: true, localFallback: true };
+        }).catch(function(err) {
+          console.error('Local rename save failed:', err);
+          showToast(err && err.message ? err.message : 'Rename failed');
+          return null;
+        });
+      }
       if (reviewPersistenceMode !== 'served') {
         return persistReviewBundle({ renameTitle: newTitle }).then(function() {
           return { ok: true };
         });
       }
       return checkServerAvailability().then(function(available) {
-        if (!available) throw new Error('Rename requires the Superview server');
+        if (!available) {
+          return saveRenameLocally();
+        }
         return fetch(serverBase + '/rename-task', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3056,6 +3119,14 @@ export function buildHtml(options: TemplateOptions): string {
           });
         }
         return res.json();
+      }).catch(function(err) {
+        if (reviewPersistenceMode === 'served') {
+          console.warn('[superview] rename falling back to local review storage:', err);
+          return saveRenameLocally();
+        }
+        console.error('Rename failed:', err);
+        showToast(err && err.message ? err.message : 'Rename failed');
+        throw err;
       });
     }
 
@@ -3184,7 +3255,7 @@ export function buildHtml(options: TemplateOptions): string {
 
     function setEditableSourceText(target, text) {
       if (!target) return;
-      target.setAttribute('data-sv-edit-source', encodeURIComponent(text || ''));
+      target.setAttribute('data-sv-edit-source', encodeURIComponent(normalizeClipboardText(text || '')));
     }
 
     function renderMarkdownClient(text) {
@@ -3193,6 +3264,10 @@ export function buildHtml(options: TemplateOptions): string {
       html = html.replace(/\\!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:0.5rem 0">');
       html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
       html = html.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
+      html = html.replace(/(^|[^*])\\*([^*\\n][^*]*?)\\*(?!\\*)/gm, function(_match, prefix, content) {
+        return prefix + '<em>' + content + '</em>';
+      });
+      html = html.replace(/^&gt; (.+)$/gm, '<div style="border-left:3px solid var(--sv-border);padding-left:0.75rem;color:var(--sv-muted);font-style:italic;margin:0.5rem 0">$1</div>');
       html = html.replace(/\\n/g, '<br>');
       return html;
     }
@@ -3300,11 +3375,15 @@ export function buildHtml(options: TemplateOptions): string {
       var scrollY = window.scrollY || window.pageYOffset || 0;
       var scrollX = window.scrollX || window.pageXOffset || 0;
       var cardWidth = Math.min(360, window.innerWidth - 32);
+      var cardHeight = inlineReviewCard.offsetHeight || 0;
       var top = rect.top + scrollY - 8;
       var left = rect.right + scrollX + 20;
       if (left + cardWidth > scrollX + window.innerWidth - 16) {
         left = Math.max(scrollX + 16, rect.left + scrollX);
         top = rect.bottom + scrollY + 12;
+      }
+      if (cardHeight && top + cardHeight > scrollY + window.innerHeight - 16) {
+        top = Math.max(scrollY + 16, rect.top + scrollY - cardHeight - 16);
       }
       inlineReviewCard.style.width = cardWidth + 'px';
       inlineReviewCard.style.left = left + 'px';
@@ -3323,9 +3402,10 @@ export function buildHtml(options: TemplateOptions): string {
       if (!feedbackEnabled || !inlineReviewCard) return;
       var block = focusAnchorBlock(blockId);
       if (!block) return;
-      if (window.innerWidth <= 767 && commentPanel && commentPanel.classList.contains('open')) {
+      if (commentPanel && commentPanel.classList.contains('open')) {
         closeCommentPanel();
       }
+      dismissSelectionToolbar();
       activeEditedCommentId = options && options.editCommentId ? options.editCommentId : null;
       activeInlineReview = {
         blockId: blockId,
@@ -3406,6 +3486,10 @@ export function buildHtml(options: TemplateOptions): string {
       if (sidebar && window.innerWidth <= 1199) {
         sidebar.classList.remove('open');
       }
+      if (inlineReviewCard && !inlineReviewCard.hidden) {
+        closeInlineReviewCard();
+      }
+      dismissSelectionToolbar();
       commentPanel.classList.add('open');
       document.body.classList.add('sv-comment-panel-open');
       renderCommentList();
@@ -3532,12 +3616,13 @@ export function buildHtml(options: TemplateOptions): string {
         }
         persistFeedback();
         persistReviewBundle().then(function() {
-          if (editedItem && reviewPersistenceMode === 'served') tryServerSync(editedItem);
+          return editedItem ? syncReviewItemToServer(editedItem) : Promise.resolve({ synced: reviewPersistenceMode === 'filesystem', localFallback: reviewPersistenceMode !== 'filesystem' });
+        }).then(function(result) {
           activeEditedCommentId = null;
           renderInlineReviewCard();
           renderCommentList();
           updateBlockHighlights();
-          showToast('Comment updated');
+          showToast(result && result.synced ? 'Comment updated' : 'Updated in this browser');
         });
         return;
       }
@@ -3554,12 +3639,13 @@ export function buildHtml(options: TemplateOptions): string {
       if (activeInlineReview.anchor) {
         item.anchor = activeInlineReview.anchor;
       }
-      saveFeedback(item);
-      inlineReviewTextarea.value = '';
-      renderInlineReviewCard();
-      renderCommentList();
-      updateBlockHighlights();
-      showToast(reviewPersistenceMode === 'served' || reviewPersistenceMode === 'filesystem' ? 'Comment saved' : 'Saved in this browser');
+      saveFeedback(item).then(function(result) {
+        inlineReviewTextarea.value = '';
+        renderInlineReviewCard();
+        renderCommentList();
+        updateBlockHighlights();
+        showToast(result && result.synced ? 'Comment saved' : 'Saved in this browser');
+      });
     }
 
     function toggleCommentResolved(e, id) {
@@ -3575,7 +3661,8 @@ export function buildHtml(options: TemplateOptions): string {
       }
       persistFeedback();
       persistReviewBundle().then(function() {
-        if (updatedItem && reviewPersistenceMode === 'served') tryServerSync(updatedItem);
+        if (!updatedItem) return null;
+        return syncReviewItemToServer(updatedItem);
       });
       renderInlineReviewCard();
       renderCommentList();
@@ -3602,7 +3689,7 @@ export function buildHtml(options: TemplateOptions): string {
       feedbackItems = feedbackItems.filter(function(f) { return f.id !== id; });
       persistFeedback();
       persistReviewBundle().then(function() {
-        if (reviewPersistenceMode === 'served') tryServerDelete(id);
+        return deleteReviewItemFromServer(id);
       });
       if (activeEditedCommentId === id) {
         activeEditedCommentId = null;
@@ -3761,6 +3848,16 @@ export function buildHtml(options: TemplateOptions): string {
 
     function updateSelectionToolbar(triggerTarget) {
       if (!feedbackEnabled || !selToolbar) return;
+      if (commentPanel && commentPanel.classList.contains('open')) {
+        selToolbar.classList.remove('visible');
+        pendingSelection = null;
+        return;
+      }
+      if (inlineReviewCard && !inlineReviewCard.hidden) {
+        selToolbar.classList.remove('visible');
+        pendingSelection = null;
+        return;
+      }
       if (triggerTarget && triggerTarget.closest && triggerTarget.closest('.sv-comment-panel')) return;
       if (triggerTarget && triggerTarget.closest && triggerTarget.closest('.sv-inline-review-card')) return;
       if (triggerTarget && triggerTarget.closest && triggerTarget.closest('.sv-block-actions')) return;
@@ -3823,7 +3920,7 @@ export function buildHtml(options: TemplateOptions): string {
     function copySelectionText(e) {
       if (e) e.stopPropagation();
       if (!pendingSelection || !pendingSelection.selectedText) return;
-      copyTextValue(pendingSelection.selectedText.trim());
+      copyTextValue(pendingSelection.selectedText);
       dismissSelectionToolbar();
     }
 
@@ -3906,6 +4003,24 @@ export function buildHtml(options: TemplateOptions): string {
       blockEditTimers[blockId] = setTimeout(function() {
         saveBlockEdit(blockId, { autosave: true });
       }, typeof delay === 'number' ? delay : BLOCK_EDIT_AUTOSAVE_MS);
+    }
+
+    function saveBlockEditLocally(blockId, editItem, savedText, options) {
+      var state = getBlockEditState(blockId);
+      reviewPersistenceMode = 'export';
+      upsertFeedbackItem(editItem);
+      return persistReviewBundle().then(function() {
+        finalizeBlockEditSave(blockId, savedText, editItem, {
+          savedLabel: options && options.savedLabel ? options.savedLabel : 'Saved in this browser',
+        });
+        return { localFallback: true };
+      }).catch(function(err) {
+        state.inFlight = false;
+        console.error('Local save failed:', err);
+        setBlockEditStatus(blockId, err && err.message ? err.message : 'Save failed', 'error');
+        showToast(err && err.message ? err.message : 'Save failed');
+        return null;
+      });
     }
 
     function finalizeBlockEditSave(blockId, savedText, editItem, options) {
@@ -4035,7 +4150,11 @@ export function buildHtml(options: TemplateOptions): string {
       };
       if (reviewPersistenceMode === 'served') {
         checkServerAvailability().then(function(available) {
-          if (!available) throw new Error('Server unavailable');
+          if (!available) {
+            return saveBlockEditLocally(blockId, editItem, newText, {
+              savedLabel: 'Saved in this browser',
+            });
+          }
           return fetch(serverBase + '/save-content', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4050,6 +4169,7 @@ export function buildHtml(options: TemplateOptions): string {
             })
           });
         }).then(function(res) {
+          if (res && res.localFallback) return res;
           if (!res) throw new Error('Save failed');
           return res.json().catch(function() { return {}; }).then(function(data) {
             if (!res.ok) {
@@ -4058,12 +4178,19 @@ export function buildHtml(options: TemplateOptions): string {
             return data;
           });
         }).then(function(data) {
+          if (data && data.localFallback) return;
           var savedText = data && typeof data.savedText === 'string' ? data.savedText : newText;
           persistReviewBundle();
           finalizeBlockEditSave(blockId, savedText, data && data.item ? data.item : editItem, {
             savedLabel: 'Saved to Superview',
           });
         }).catch(function(err) {
+          if (reviewPersistenceMode === 'served') {
+            console.warn('[superview] save falling back to local review storage:', err);
+            return saveBlockEditLocally(blockId, editItem, newText, {
+              savedLabel: 'Saved in this browser',
+            });
+          }
           state.inFlight = false;
           console.error('Save failed:', err);
           setBlockEditStatus(blockId, err && err.message ? err.message : 'Save failed', 'error');
@@ -4483,32 +4610,14 @@ export function buildHtml(options: TemplateOptions): string {
         code: '\\u2328', table: '\\uD83D\\uDCCA', generic: '\\uD83D\\uDCC3'
       };
       function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-      function renderIteration(taskGroup, item) {
-        var isCurrent = isCurrentHistoryIteration(item);
-        var cls = 'sv-sidebar-subitem' + (isCurrent ? ' current' : '');
-        var href = getHistoryHref(item);
-        var badges = '';
-        if (item.kept) {
-          badges += ' <span class="sv-sidebar-subitem-badge">Kept</span>';
-        }
-        return '<a class="' + cls + '" href="' + esc(href) + '" title="' + esc(taskGroup.title + ' ' + item.versionLabel) + '">'
-          + '<span class="sv-sidebar-subitem-label">' + esc(item.versionLabel) + '</span>'
-          + '<span class="sv-sidebar-subitem-meta">' + formatSidebarTime(item.updatedAt) + badges + '</span></a>';
-      }
       function renderTaskGroup(taskGroup, matchInfo) {
         var latestEntry = taskGroup.latestEntry;
         var groupIsCurrent = taskGroup.taskId === taskId && taskGroup.basePath === currentBasePath;
         var latestIsCurrent = isCurrentHistoryIteration(latestEntry);
         var latestHref = getHistoryHref(latestEntry);
-        var olderEntries = taskGroup.entries.slice(1);
-        var childEntries = matchInfo && !matchInfo.parentMatch
-          ? matchInfo.entries.filter(function(entry) { return entry.versions !== latestEntry.versions; })
-          : olderEntries;
-        var expanded = childEntries.length > 0 && (!query || groupIsCurrent || (matchInfo && !matchInfo.parentMatch));
         var groupClass = 'sv-sidebar-task-group'
           + (groupIsCurrent ? ' current-group' : '')
-          + (olderEntries.length > 0 ? '' : ' single')
-          + (expanded ? ' expanded' : '');
+          + ' single';
         var meta = [];
         if (currentScope === 'workspace') {
           meta.push('<span class="sv-sidebar-source-badge">' + esc(taskGroup.sourceLabel || latestEntry.sourceLabel || deriveSourceLabel(taskGroup.basePath)) + '</span>');
@@ -4518,19 +4627,13 @@ export function buildHtml(options: TemplateOptions): string {
         if ((taskGroup.feedbackCount || 0) > 0) meta.push('<span class="sv-sidebar-feedback-badge">' + taskGroup.feedbackCount + '</span>');
         return '<div class="' + groupClass + '" data-task-id="' + esc(taskGroup.taskId) + '" data-base-path="' + esc(taskGroup.basePath || '') + '">'
           + '<div class="sv-sidebar-task-head">'
-          + '<a class="sv-sidebar-item sv-sidebar-parent' + (latestIsCurrent ? ' current' : '') + '" href="' + esc(latestHref) + '" title="' + esc(taskGroup.title) + '">'
+          + '<a class="sv-sidebar-item sv-sidebar-parent' + (groupIsCurrent ? ' current' : '') + '" href="' + esc(latestHref) + '" title="' + esc(taskGroup.title) + '">'
           + '<span class="sv-sidebar-item-icon">' + (typeIcons[latestEntry.type] || '\\uD83D\\uDCC3') + '</span>'
           + '<span class="sv-sidebar-item-body">'
           + '<span class="sv-sidebar-item-title">' + esc(taskGroup.title) + '</span>'
           + '<span class="sv-sidebar-item-meta">' + meta.join('') + '</span>'
           + '</span></a>'
-          + (olderEntries.length > 0
-            ? '<button class="sv-sidebar-task-toggle" onclick="toggleTaskGroup(this, event)" aria-label="Toggle versions"><span class="sv-sidebar-task-toggle-icon">▾</span></button>'
-            : '')
           + '</div>'
-          + (childEntries.length > 0
-            ? '<div class="sv-sidebar-task-children">' + childEntries.map(function(entry) { return renderIteration(taskGroup, entry); }).join('') + '</div>'
-            : '')
           + '</div>';
       }
       var words = (query || '').toLowerCase().trim().split(/\\s+/).filter(Boolean);
@@ -4899,10 +5002,13 @@ export function buildHtml(options: TemplateOptions): string {
       };
       upsertFeedbackItem(noteItem);
       persistReviewBundle().then(function() {
-        if (reviewPersistenceMode === 'served') tryServerSync(noteItem);
+        return syncReviewItemToServer(noteItem);
+      }).then(function(result) {
+        var now = new Date();
+        if (indicator) {
+          indicator.textContent = (result && result.synced ? 'Saved ' : 'Saved locally ') + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }
       });
-      var now = new Date();
-      if (indicator) indicator.textContent = 'Saved ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     }
 
     // Onboarding hint on first visit
@@ -5039,6 +5145,40 @@ export function buildHtml(options: TemplateOptions): string {
               } else if (data.type === 'content_saved') {
                 if (data.clientId && data.clientId === (window.__svClientId || '')) return;
                 location.reload();
+              } else if (data.type === 'feedback' && data.taskId === (window.__svTaskId || '')) {
+                if (data.basePath && (window.__svBasePath || '') && data.basePath !== (window.__svBasePath || '')) return;
+                if (data.item) {
+                  upsertFeedbackItem(data.item);
+                  if (data.item.type === 'general_notes') {
+                    var notesTextarea = document.getElementById('sv-notes-textarea');
+                    if (notesTextarea && document.activeElement !== notesTextarea) {
+                      notesTextarea.value = data.item.text || '';
+                    }
+                  }
+                  renderCommentList();
+                  renderEditList();
+                  updateBlockHighlights();
+                  if (activeInlineReview) {
+                    renderInlineReviewCard();
+                    positionInlineReviewCard();
+                  }
+                }
+              } else if (data.type === 'feedback_delete' && data.taskId === (window.__svTaskId || '')) {
+                if (data.basePath && (window.__svBasePath || '') && data.basePath !== (window.__svBasePath || '')) return;
+                if (data.itemId) {
+                  feedbackItems = feedbackItems.filter(function(item) { return item.id !== data.itemId; });
+                  persistFeedback();
+                  renderCommentList();
+                  renderEditList();
+                  updateBlockHighlights();
+                  if (activeEditedCommentId === data.itemId) {
+                    activeEditedCommentId = null;
+                  }
+                  if (activeInlineReview) {
+                    renderInlineReviewCard();
+                    positionInlineReviewCard();
+                  }
+                }
               } else if (data.type === 'task_rename' && data.taskId && data.title) {
                 applyTaskRename(data.taskId, data.basePath || '', data.title);
               }
@@ -5122,33 +5262,13 @@ function buildSidebar(history: HistoryEntry[], currentTaskId: string, currentVer
 
 function renderSidebarTaskGroup(taskGroup: HistoryTaskGroup, currentTaskId: string, currentVersion: number): string {
   const latestEntry = taskGroup.latestEntry;
-  const latestIsCurrent = taskGroup.taskId === currentTaskId && latestEntry.versions === currentVersion;
-  const latestHref = latestIsCurrent ? '#' : escapeHtml(toViewHref(latestEntry.filePath));
-  const olderEntries = taskGroup.entries.slice(1);
-  const expanded = olderEntries.length > 0 && taskGroup.taskId === currentTaskId;
-
-  const childrenHtml = olderEntries.length > 0 ? `
-    <div class="sv-sidebar-task-children">
-      ${olderEntries.map((entry) => {
-        const isCurrentIteration = taskGroup.taskId === currentTaskId && entry.versions === currentVersion;
-        const href = isCurrentIteration ? '#' : escapeHtml(toViewHref(entry.filePath));
-        const badge = entry.kept
-          ? `<span class="sv-sidebar-subitem-badge">Kept</span>`
-          : '';
-
-        return `
-          <a class="sv-sidebar-subitem${isCurrentIteration ? ' current' : ''}" href="${href}" title="${escapeHtml(taskGroup.title)} v${entry.versions}">
-            <span class="sv-sidebar-subitem-label">v${entry.versions}</span>
-            <span class="sv-sidebar-subitem-meta">${formatTime(entry.updatedAt)}${badge ? ` ${badge}` : ''}</span>
-          </a>`;
-      }).join('')}
-    </div>
-  ` : '';
+  const groupIsCurrent = taskGroup.taskId === currentTaskId;
+  const latestHref = groupIsCurrent && latestEntry.versions === currentVersion ? '#' : escapeHtml(toViewHref(latestEntry.filePath));
 
   return `
-    <div class="sv-sidebar-task-group${expanded ? ' expanded' : ''}${olderEntries.length === 0 ? ' single' : ''}" data-task-id="${escapeHtml(taskGroup.taskId)}">
+    <div class="sv-sidebar-task-group single" data-task-id="${escapeHtml(taskGroup.taskId)}">
       <div class="sv-sidebar-task-head">
-        <a class="sv-sidebar-item sv-sidebar-parent${latestIsCurrent ? ' current' : ''}" href="${latestHref}" title="${escapeHtml(taskGroup.title)}">
+        <a class="sv-sidebar-item sv-sidebar-parent${groupIsCurrent ? ' current' : ''}" href="${latestHref}" title="${escapeHtml(taskGroup.title)}">
           <span class="sv-sidebar-item-icon">${getTypeIcon(latestEntry.type)}</span>
           <span class="sv-sidebar-item-body">
             <span class="sv-sidebar-item-title">${escapeHtml(taskGroup.title)}</span>
@@ -5159,12 +5279,7 @@ function renderSidebarTaskGroup(taskGroup: HistoryTaskGroup, currentTaskId: stri
             </span>
           </span>
         </a>
-        ${olderEntries.length > 0 ? `
-        <button class="sv-sidebar-task-toggle" onclick="toggleTaskGroup(this, event)" aria-label="Toggle versions">
-          <span class="sv-sidebar-task-toggle-icon">▾</span>
-        </button>` : ''}
       </div>
-      ${childrenHtml}
     </div>
   `;
 }

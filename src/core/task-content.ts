@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import type { CanonicalContentSnapshot, ContentMetadata, ContentType, TaskContentManifest } from '../types.js';
 
@@ -15,6 +15,21 @@ function ensureContentDir(basePath: string): string {
     mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+
+function writeFileAtomic(filePath: string, content: string): void {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, content, 'utf-8');
+  renameSync(tempPath, filePath);
+}
+
+function readFileMtimeIso(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    return new Date(statSync(filePath).mtimeMs).toISOString();
+  } catch {
+    return null;
+  }
 }
 
 function contentPath(basePath: string, taskId: string): string {
@@ -49,7 +64,7 @@ export function readTaskContent(basePath: string, taskId: string): string | null
 
 export function writeTaskContent(basePath: string, taskId: string, content: string): void {
   ensureContentDir(basePath);
-  writeFileSync(contentPath(basePath, taskId), content, 'utf-8');
+  writeFileAtomic(contentPath(basePath, taskId), content);
 }
 
 export function readTaskManifest(basePath: string, taskId: string): TaskContentManifest | null {
@@ -88,7 +103,7 @@ export function writeTaskManifest(basePath: string, manifest: TaskContentManifes
     sourceKind: manifest.sourceKind || null,
     sourceLastSyncedAt: manifest.sourceLastSyncedAt || null,
   };
-  writeFileSync(manifestPath(basePath, manifest.taskId), JSON.stringify(nextManifest, null, 2), 'utf-8');
+  writeFileAtomic(manifestPath(basePath, manifest.taskId), JSON.stringify(nextManifest, null, 2));
 }
 
 export function upsertTaskContentManifest(
@@ -171,12 +186,13 @@ export function readCanonicalContentSnapshot(basePath: string, taskId: string): 
   if (content === null) return null;
   const manifest = readTaskManifest(basePath, taskId);
   const resolvedBasePath = resolve(basePath);
+  const contentUpdatedAt = manifest?.updatedAt || readFileMtimeIso(contentPath(resolvedBasePath, taskId)) || readFileMtimeIso(manifestPath(resolvedBasePath, taskId)) || new Date().toISOString();
   return {
     taskId,
     title: manifest?.title || manifest?.metadata?.title || taskId,
     basePath: resolvedBasePath,
     currentVersion: manifest?.currentVersion || 1,
-    updatedAt: manifest?.updatedAt || new Date().toISOString(),
+    updatedAt: contentUpdatedAt,
     content,
     contentPath: taskContentPath(resolvedBasePath, taskId),
     contentSource: 'superview-canonical',

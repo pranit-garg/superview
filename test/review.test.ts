@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { runCli } from '../src/cli.js';
 import {
   getLatestReviewTaskId,
@@ -94,10 +96,29 @@ describe('review cli', () => {
     const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
 
     expect(output).toContain('Open that HTML file directly');
+    expect(output).toContain('superview render /tmp/sv-draft.md');
     expect(output).toContain('superview content --latest --json --base-dir');
     expect(output).toContain('superview inbox --latest --json --base-dir');
     expect(output).toContain('Do NOT tell the user to open localhost');
     expect(output).not.toContain('feedback --latest --json');
+    expect(output).not.toContain('npx superview');
+  });
+
+  it('runs the installed bin correctly through a symlinked path', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'superview-bin-'));
+    const linkPath = join(tempDir, 'superview');
+    const builtCliPath = join(process.cwd(), 'dist', 'cli.js');
+    symlinkSync(builtCliPath, linkPath);
+
+    try {
+      const output = execFileSync('node', [linkPath, '--help'], { encoding: 'utf-8' });
+
+      expect(output).toContain('superview - Render AI output to file-first review HTML');
+      expect(output).toContain('superview render <file|->');
+      expect(output).toContain('superview setup-claude');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('resolves the latest review bundle by review activity, not render history', async () => {

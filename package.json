@@ -24,11 +24,12 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "lint": "tsc --noEmit"
   },
   "keywords": [
     "ai",

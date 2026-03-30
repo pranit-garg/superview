@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import type { FeedbackFile, FeedbackItem, HistoryEntry, ReviewBundle, ReviewSyncState } from '../types.js';
 import { applyLegacyContentEdits } from './editable-content.js';
@@ -22,6 +22,55 @@ function ensureDir(dir: string): string {
     mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+
+function writeFileAtomic(filePath: string, content: string): void {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, content, 'utf-8');
+  renameSync(tempPath, filePath);
+}
+
+function readFileMtimeIso(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    return new Date(statSync(filePath).mtimeMs).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function bundleFreshnessScore(bundle: ReviewBundle, filePath: string): number {
+  const explicitTimestamps = [bundle.updatedAt, bundle.exportedAt]
+    .map((value) => Date.parse(value || ''))
+    .filter((value) => Number.isFinite(value));
+  if (explicitTimestamps.length > 0) {
+    return Math.max(...explicitTimestamps);
+  }
+  const fileMtime = Date.parse(readFileMtimeIso(filePath) || '');
+  return Number.isFinite(fileMtime) ? fileMtime : 0;
+}
+
+function reviewSourcePriority(syncState: ReviewSyncState): number {
+  return syncState === 'legacy' ? 0 : 1;
+}
+
+interface ReviewBundleCandidate {
+  bundle: ReviewBundle;
+  filePath: string;
+  freshness: number;
+  syncState: ReviewSyncState;
+}
+
+function isNewerReviewBundle(candidate: ReviewBundleCandidate, existing: ReviewBundleCandidate): boolean {
+  if (candidate.freshness !== existing.freshness) {
+    return candidate.freshness > existing.freshness;
+  }
+  const candidatePriority = reviewSourcePriority(candidate.syncState);
+  const existingPriority = reviewSourcePriority(existing.syncState);
+  if (candidatePriority !== existingPriority) {
+    return candidatePriority > existingPriority;
+  }
+  return Date.parse(candidate.bundle.updatedAt || '') >= Date.parse(existing.bundle.updatedAt || '');
 }
 
 function reviewDir(basePath: string): string {
@@ -65,7 +114,7 @@ function writeHistoryEntries(basePath: string, entries: HistoryEntry[]): void {
   if (!existsSync(filePath) && entries.length === 0) return;
   ensureDir(basePath);
   const serialized = entries.map((entry) => JSON.stringify(entry)).join('\n');
-  writeFileSync(filePath, serialized ? `${serialized}\n` : '', 'utf-8');
+  writeFileAtomic(filePath, serialized ? `${serialized}\n` : '');
 }
 
 function renameHistoryTaskTitles(basePath: string, taskId: string, title: string): void {
@@ -222,7 +271,7 @@ function highestItemVersion(items: FeedbackItem[]): number {
 
 function normalizeBundle(
   bundle: Partial<ReviewBundle> & { taskId: string; items?: FeedbackItem[]; updatedAt?: string; exportedAt?: string },
-  defaults: { basePath?: string; title?: string; currentVersion?: number; syncState?: ReviewSyncState } = {},
+  defaults: { basePath?: string; title?: string; currentVersion?: number; syncState?: ReviewSyncState; updatedAt?: string; exportedAt?: string } = {},
 ): ReviewBundle {
   const items = cloneItems(bundle.items || []);
   const manifest = defaults.basePath ? readTaskManifest(defaults.basePath, bundle.taskId) : null;
@@ -232,8 +281,8 @@ function normalizeBundle(
     || manifest?.currentVersion
     || highestItemVersion(items);
   const basePath = resolve(bundle.basePath || defaults.basePath || process.cwd());
-  const updatedAt = bundle.updatedAt || bundle.exportedAt || nowIso();
-  const exportedAt = bundle.exportedAt || updatedAt;
+  const updatedAt = bundle.updatedAt || defaults.updatedAt || bundle.exportedAt || defaults.exportedAt || nowIso();
+  const exportedAt = bundle.exportedAt || defaults.exportedAt || updatedAt;
   const notes = bundle.notes?.trim() || normalizeNotes(items);
 
   return {
@@ -343,12 +392,13 @@ function materializeReviewBundle(basePath: string, bundle: ReviewBundle): Review
 
 function reviewFileToBundle(
   filePath: string,
-  defaults: { basePath?: string; title?: string; syncState?: ReviewSyncState } = {},
+  defaults: { basePath?: string; title?: string; syncState?: ReviewSyncState; updatedAt?: string; exportedAt?: string } = {},
 ): ReviewBundle | null {
   const parsed = parseJsonFile<ReviewBundle | FeedbackFile | Partial<ReviewBundle>>(filePath);
   if (!parsed || typeof parsed !== 'object' || !('taskId' in parsed) || !parsed.taskId) {
     return null;
   }
+  const fileMtime = readFileMtimeIso(filePath);
   const bundle = normalizeBundle(
     {
       ...parsed,
@@ -359,6 +409,8 @@ function reviewFileToBundle(
       basePath: defaults.basePath,
       title: defaults.title,
       syncState: defaults.syncState,
+      updatedAt: defaults.updatedAt || fileMtime || undefined,
+      exportedAt: defaults.exportedAt || fileMtime || undefined,
     },
   );
   return bundle;
@@ -366,13 +418,13 @@ function reviewFileToBundle(
 
 function writeLegacyMirror(basePath: string, bundle: ReviewBundle): void {
   ensureLegacyFeedbackDir(basePath);
-  writeFileSync(legacyFeedbackPath(basePath, bundle.taskId), JSON.stringify(bundle, null, 2), 'utf-8');
+  writeFileAtomic(legacyFeedbackPath(basePath, bundle.taskId), JSON.stringify(bundle, null, 2));
 }
 
 export function writeReviewBundle(basePath: string, bundle: ReviewBundle, options: { mirrorLegacy?: boolean } = {}): ReviewBundle {
   ensureReviewDir(basePath);
   const normalized = normalizeBundle(bundle, { basePath, title: bundle.title, currentVersion: bundle.currentVersion, syncState: bundle.syncState });
-  writeFileSync(reviewPath(basePath, normalized.taskId), JSON.stringify(normalized, null, 2), 'utf-8');
+  writeFileAtomic(reviewPath(basePath, normalized.taskId), JSON.stringify(normalized, null, 2));
   if (options.mirrorLegacy !== false) {
     writeLegacyMirror(basePath, normalized);
   }
@@ -380,20 +432,37 @@ export function writeReviewBundle(basePath: string, bundle: ReviewBundle, option
 }
 
 export function readReviewBundle(basePath: string, taskId: string): ReviewBundle | null {
-  const canonical = reviewFileToBundle(reviewPath(basePath, taskId), { basePath });
-  if (canonical) return canonical;
-
-  const legacy = reviewFileToBundle(legacyFeedbackPath(basePath, taskId), {
+  const canonicalPath = reviewPath(basePath, taskId);
+  const legacyPath = legacyFeedbackPath(basePath, taskId);
+  const canonical = reviewFileToBundle(canonicalPath, { basePath, syncState: 'synced' });
+  const legacy = reviewFileToBundle(legacyPath, {
     basePath,
     syncState: 'legacy',
   });
-  return legacy;
+  if (!canonical) return legacy;
+  if (!legacy) return canonical;
+
+  const canonicalCandidate: ReviewBundleCandidate = {
+    bundle: canonical,
+    filePath: canonicalPath,
+    freshness: bundleFreshnessScore(canonical, canonicalPath),
+    syncState: 'synced',
+  };
+  const legacyCandidate: ReviewBundleCandidate = {
+    bundle: legacy,
+    filePath: legacyPath,
+    freshness: bundleFreshnessScore(legacy, legacyPath),
+    syncState: 'legacy',
+  };
+
+  return isNewerReviewBundle(legacyCandidate, canonicalCandidate) ? legacy : canonical;
 }
 
 export function readReviewBundleFromPath(filePath: string): ReviewBundle | null {
   const resolvedPath = resolve(filePath);
   const parsed = parseJsonFile<ReviewBundle | FeedbackFile | Partial<ReviewBundle>>(resolvedPath);
   if (parsed && typeof parsed === 'object' && 'taskId' in parsed && parsed.taskId) {
+    const fileMtime = readFileMtimeIso(resolvedPath);
     return normalizeBundle(
       {
         ...parsed,
@@ -403,6 +472,8 @@ export function readReviewBundleFromPath(filePath: string): ReviewBundle | null 
       {
         basePath: inferBasePathFromPath(resolvedPath) || (parsed as Partial<ReviewBundle>).basePath || process.cwd(),
         syncState: (parsed as Partial<ReviewBundle>).syncState as ReviewSyncState | undefined,
+        updatedAt: fileMtime || undefined,
+        exportedAt: fileMtime || undefined,
       },
     );
   }
@@ -545,21 +616,27 @@ export function renameReviewBundleTitle(basePath: string, taskId: string, title:
 }
 
 export function listReviewBundles(basePath: string): ReviewBundle[] {
-  const bundles = new Map<string, ReviewBundle>();
+  const bundles = new Map<string, ReviewBundleCandidate>();
   const scan = (dir: string, syncState: ReviewSyncState, titleFromPath?: string): void => {
     if (!existsSync(dir)) return;
     for (const file of readdirSync(dir)) {
       if (!file.endsWith('.json')) continue;
-      const bundle = reviewFileToBundle(join(dir, file), {
+      const filePath = join(dir, file);
+      const bundle = reviewFileToBundle(filePath, {
         basePath,
         syncState,
         title: titleFromPath,
       });
       if (!bundle) continue;
+      const candidate: ReviewBundleCandidate = {
+        bundle,
+        filePath,
+        freshness: bundleFreshnessScore(bundle, filePath),
+        syncState,
+      };
       const existing = bundles.get(bundle.taskId);
-      if (syncState === 'legacy' && existing) continue;
-      if (!existing || new Date(bundle.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
-        bundles.set(bundle.taskId, bundle);
+      if (!existing || isNewerReviewBundle(candidate, existing)) {
+        bundles.set(bundle.taskId, candidate);
       }
     }
   };
@@ -567,9 +644,18 @@ export function listReviewBundles(basePath: string): ReviewBundle[] {
   scan(reviewDir(basePath), 'synced');
   scan(legacyFeedbackDir(basePath), 'legacy');
 
-  return Array.from(bundles.values()).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
+  return Array.from(bundles.values())
+    .sort((a, b) => {
+      if (a.freshness !== b.freshness) {
+        return b.freshness - a.freshness;
+      }
+      const priorityDelta = reviewSourcePriority(b.syncState) - reviewSourcePriority(a.syncState);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      return Date.parse(b.bundle.updatedAt || '') - Date.parse(a.bundle.updatedAt || '');
+    })
+    .map((entry) => entry.bundle);
 }
 
 export function getLatestReviewTaskId(basePath: string): string | null {

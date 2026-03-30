@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   readFeedback,
@@ -10,6 +10,7 @@ import {
   resolveFeedbackItem,
   summarizeFeedback,
 } from '../src/core/feedback.js';
+import { legacyFeedbackPath, writeReviewBundle } from '../src/core/review.js';
 import type { FeedbackItem } from '../src/types.js';
 
 const TEST_DIR = join(process.cwd(), '.test-superview-feedback');
@@ -57,6 +58,41 @@ describe('feedback', () => {
 
     const file = readFeedback(TEST_DIR, 'task-1');
     expect(file!.items.length).toBe(2);
+  });
+
+  it('prefers the freshest review bundle even when canonical and legacy files diverge', () => {
+    mkdirSync(join(TEST_DIR, '.superview', 'feedback'), { recursive: true });
+
+    writeReviewBundle(TEST_DIR, {
+      reviewId: 'review-task-divergent',
+      taskId: 'task-divergent',
+      title: 'Canonical Title',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T08:00:00.000Z',
+      exportedAt: '2026-03-27T08:00:00.000Z',
+      syncState: 'synced',
+      reviewSchemaVersion: 1,
+      items: [makeItem({ id: 'canonical-comment', text: 'Canonical review' })],
+    });
+
+    writeFileSync(legacyFeedbackPath(TEST_DIR, 'task-divergent'), JSON.stringify({
+      reviewId: 'review-task-divergent-legacy',
+      taskId: 'task-divergent',
+      title: 'Legacy Title',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T13:00:00.000Z',
+      exportedAt: '2026-03-27T13:00:00.000Z',
+      syncState: 'legacy',
+      reviewSchemaVersion: 1,
+      items: [makeItem({ id: 'legacy-comment', text: 'Legacy wins' })],
+    }, null, 2), 'utf-8');
+
+    const file = readFeedback(TEST_DIR, 'task-divergent');
+    expect(file).not.toBeNull();
+    expect(file!.title).toBe('Legacy Title');
+    expect(file!.items[0].text).toBe('Legacy wins');
   });
 
   it('gets unresolved feedback', () => {

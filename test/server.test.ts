@@ -7,7 +7,7 @@ import { appendHistory, buildHistoryPreview, readHistory } from '../src/core/his
 import { readFeedback } from '../src/core/feedback.js';
 import { render } from '../src/core/renderer.js';
 import { startServer } from '../src/core/server.js';
-import { readReviewBundle, writeReviewBundle } from '../src/core/review.js';
+import { legacyFeedbackPath, readReviewBundle, writeReviewBundle } from '../src/core/review.js';
 import { readTaskContent, upsertTaskContentManifest } from '../src/core/task-content.js';
 import type { FeedbackItem, HistoryEntry } from '../src/types.js';
 
@@ -243,6 +243,92 @@ describe('server save-content', () => {
       const review = await reviewResponse.json() as { taskId: string; title: string };
       expect(review.taskId).toBe('task-old');
       expect(review.title).toBe('Old Review');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it('prefers fresher legacy review bundles in compatibility routes while still reading canonical content', async () => {
+    upsertTaskContentManifest(TEST_DIR, 'task-legacy-route', 'Legacy route canonical content', {
+      type: 'generic',
+      title: 'Legacy Route',
+      metadata: { title: 'Legacy Route' },
+      currentVersion: 1,
+      updatedAt: '2026-03-27T09:00:00.000Z',
+      sourcePath: join(TEST_DIR, 'legacy-route.md'),
+      sourceKind: 'markdown',
+    });
+    upsertTaskContentManifest(TEST_DIR, 'task-canonical-route', 'Canonical route content', {
+      type: 'generic',
+      title: 'Canonical Route',
+      metadata: { title: 'Canonical Route' },
+      currentVersion: 1,
+      updatedAt: '2026-03-27T12:00:00.000Z',
+      sourcePath: join(TEST_DIR, 'canonical-route.md'),
+      sourceKind: 'markdown',
+    });
+    writeReviewBundle(TEST_DIR, {
+      reviewId: 'review-task-legacy-route',
+      taskId: 'task-legacy-route',
+      title: 'Legacy Review',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T09:00:00.000Z',
+      exportedAt: '2026-03-27T09:00:00.000Z',
+      syncState: 'synced',
+      reviewSchemaVersion: 1,
+      items: [makeFeedbackItem({ id: 'legacy-route-comment', text: 'Canonical bundle is stale' })],
+    });
+    writeReviewBundle(TEST_DIR, {
+      reviewId: 'review-task-canonical-route',
+      taskId: 'task-canonical-route',
+      title: 'Canonical Review',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T12:00:00.000Z',
+      exportedAt: '2026-03-27T12:00:00.000Z',
+      syncState: 'synced',
+      reviewSchemaVersion: 1,
+      items: [makeFeedbackItem({ id: 'canonical-route-comment', text: 'Later canonical bundle' })],
+    });
+    writeFileSync(legacyFeedbackPath(TEST_DIR, 'task-legacy-route'), JSON.stringify({
+      reviewId: 'review-task-legacy-route-legacy',
+      taskId: 'task-legacy-route',
+      title: 'Legacy Review',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T13:00:00.000Z',
+      exportedAt: '2026-03-27T13:00:00.000Z',
+      syncState: 'legacy',
+      reviewSchemaVersion: 1,
+      items: [makeFeedbackItem({ id: 'legacy-route-comment-new', text: 'Legacy bundle wins' })],
+    }, null, 2), 'utf-8');
+
+    const server = startServer(TEST_DIR, 0);
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      const latestResponse = await fetch(`http://127.0.0.1:${port}/feedback/latest`);
+      expect(latestResponse.status).toBe(200);
+      const latest = await latestResponse.json() as {
+        taskId: string;
+        title: string;
+        content: string;
+        contentSource: string;
+        contentPath: string;
+      };
+      expect(latest.taskId).toBe('task-legacy-route');
+      expect(latest.title).toBe('Legacy Review');
+      expect(latest.content).toBe('Legacy route canonical content');
+      expect(latest.contentSource).toBe('superview-canonical');
+      expect(latest.contentPath).toContain('.superview/content/task-legacy-route.txt');
+
+      const reviewResponse = await fetch(`http://127.0.0.1:${port}/review/task-legacy-route`);
+      expect(reviewResponse.status).toBe(200);
+      const review = await reviewResponse.json() as { taskId: string; title: string; content: string };
+      expect(review.taskId).toBe('task-legacy-route');
+      expect(review.title).toBe('Legacy Review');
+      expect(review.content).toBe('Legacy route canonical content');
     } finally {
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }

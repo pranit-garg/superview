@@ -564,8 +564,16 @@ export function startServer(basePath: string, port?: number): Server {
     console.log(`[superview] ${method} ${rawUrl} 404`);
   });
 
+  server.on('error', (err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[superview] Failed to start server on port ${actualPort}: ${message}`);
+    process.exitCode = 1;
+  });
+
   server.listen(actualPort, () => {
-    console.log(`[superview] Server listening on http://localhost:${actualPort}`);
+    const address = server.address();
+    const resolvedPort = typeof address === 'object' && address ? address.port : actualPort;
+    console.log(`[superview] Server listening on http://localhost:${resolvedPort}`);
   });
 
   server.on('close', () => clearInterval(heartbeatInterval));

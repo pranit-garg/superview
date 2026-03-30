@@ -12,6 +12,7 @@ import {
   getHistoryForTask,
 } from '../src/core/history.js';
 import { addFeedbackItem } from '../src/core/feedback.js';
+import { legacyFeedbackPath, writeReviewBundle } from '../src/core/review.js';
 import type { HistoryEntry } from '../src/types.js';
 
 const TEST_DIR = join(process.cwd(), '.test-superview-history');
@@ -110,6 +111,53 @@ describe('history', () => {
       createdAt: new Date().toISOString(),
       resolved: false,
     });
+
+    const history = readHistory(TEST_DIR);
+    expect(history[0].feedbackCount).toBe(1);
+  });
+
+  it('recomputes feedback counts from the freshest review bundle when canonical and legacy files diverge', () => {
+    appendHistory(TEST_DIR, makeEntry({ taskId: 'task-divergent', title: 'Divergent review', feedbackCount: 0 }));
+    writeReviewBundle(TEST_DIR, {
+      reviewId: 'review-task-divergent',
+      taskId: 'task-divergent',
+      title: 'Canonical Divergent',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T08:00:00.000Z',
+      exportedAt: '2026-03-27T08:00:00.000Z',
+      syncState: 'synced',
+      reviewSchemaVersion: 1,
+      items: [{
+        type: 'block_comment',
+        id: 'canonical-comment',
+        blockId: 'block-1',
+        version: 1,
+        text: 'Canonical comment',
+        createdAt: '2026-03-27T08:00:00.000Z',
+        resolved: false,
+      }],
+    });
+    writeFileSync(legacyFeedbackPath(TEST_DIR, 'task-divergent'), JSON.stringify({
+      reviewId: 'review-task-divergent-legacy',
+      taskId: 'task-divergent',
+      title: 'Legacy Divergent',
+      basePath: TEST_DIR,
+      currentVersion: 1,
+      updatedAt: '2026-03-27T13:00:00.000Z',
+      exportedAt: '2026-03-27T13:00:00.000Z',
+      syncState: 'legacy',
+      reviewSchemaVersion: 1,
+      items: [{
+        type: 'block_comment',
+        id: 'legacy-comment',
+        blockId: 'block-1',
+        version: 1,
+        text: 'Legacy comment',
+        createdAt: '2026-03-27T13:00:00.000Z',
+        resolved: false,
+      }],
+    }, null, 2), 'utf-8');
 
     const history = readHistory(TEST_DIR);
     expect(history[0].feedbackCount).toBe(1);

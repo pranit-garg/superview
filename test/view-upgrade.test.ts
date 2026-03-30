@@ -55,10 +55,10 @@ describe('view upgrade', () => {
   it('detects legacy task views that lack embedded history data', () => {
     expect(isLegacyViewHtml(legacyHtml('legacy-task', '<div>Legacy</div>'))).toBe(true);
     expect(
-      isLegacyViewHtml('<script>window.__svEmbeddedHistoryData = {};</script><script>window.__svBasePath = "";</script><script>window.__svRuntimeVersion = 6;</script><div id="sv-sidebar-scope"></div><h1 id="sv-page-title"></h1>'),
+      isLegacyViewHtml('<script>window.__svEmbeddedHistoryData = {};</script><script>window.__svBasePath = "";</script><script>window.__svRuntimeVersion = 7;</script><div id="sv-sidebar-scope"></div><h1 id="sv-page-title"></h1>'),
     ).toBe(false);
     expect(
-      isLegacyViewHtml('<script>window.__svEmbeddedHistoryData = {};</script><script>window.__svBasePath = "";</script><script>window.__svRuntimeVersion = 6;</script><div id="sv-sidebar-scope"></div><h1 id="sv-page-title"></h1><script>window.open(item.href, \'_blank\')</script>'),
+      isLegacyViewHtml('<script>window.__svEmbeddedHistoryData = {};</script><script>window.__svBasePath = "";</script><script>window.__svRuntimeVersion = 7;</script><div id="sv-sidebar-scope"></div><h1 id="sv-page-title"></h1><script>window.open(item.href, \'_blank\')</script>'),
     ).toBe(true);
   });
 

@@ -14,8 +14,8 @@ export function renderMarkdown(s: string): string {
   out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   // Bold
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Italic (after bold to avoid conflicts with **)
-  out = out.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+  // Italic (after bold to avoid conflicts with **), without lookbehind so client/runtime support stays broad
+  out = out.replace(/(^|[^*])\*([^*\n][^*]*?)\*(?!\*)/gm, (_match, prefix, content) => `${prefix}<em>${content}</em>`);
   // Blockquotes (lines starting with > )
   out = out.replace(/^&gt; (.+)$/gm, '<div style="border-left:3px solid var(--sv-border);padding-left:0.75rem;color:var(--sv-muted);font-style:italic;margin:0.5rem 0">$1</div>');
   return out;
@@ -138,7 +138,7 @@ export function splitTopLevelSections(content: string): MarkdownSection[] {
 }
 
 export function encodeCopyText(text: string): string {
-  return encodeURIComponent(text);
+  return encodeURIComponent(String(text || '').replace(/\r\n?/g, '\n'));
 }
 
 export function copyDataAttributes(text: string, options: { primary?: boolean } = {}): string {

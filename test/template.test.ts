@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildHtml, buildTodayPage } from '../src/core/template.js';
+import { copyDataAttributes } from '../src/templates/shared.js';
 import type { FeedbackItem, HistoryDataPayload, HistoryEntry } from '../src/types.js';
 
 function makeHistoryEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -72,7 +73,7 @@ describe('template', () => {
     expect(html).toContain('href="task-b.html"');
   });
 
-  it('renders one sidebar task group with nested iterations for repeated task renders', () => {
+  it('renders one sidebar task group per task without nested version rows', () => {
     const html = buildHtml({
       title: 'Grouped sidebar',
       theme: 'auto',
@@ -91,11 +92,10 @@ describe('template', () => {
     });
 
     expect(html).toContain('sv-sidebar-task-group');
-    expect(html).toContain('sv-sidebar-task-children');
     expect(html).toContain('task-a-v2.html');
-    expect(html).toContain('task-a-v1.html');
-    expect(html).toContain('>v1<');
-    expect(html).not.toContain('sv-sidebar-subitem-label">v2<');
+    expect(html).not.toContain('<div class="sv-sidebar-task-children">');
+    expect(html).not.toContain('onclick="toggleTaskGroup(this, event)"');
+    expect(html).not.toContain('class="sv-sidebar-subitem');
   });
 
   it('does not reserve a hidden sidebar toggle for single-version tasks', () => {
@@ -111,6 +111,7 @@ describe('template', () => {
     });
 
     expect(html).not.toContain('sv-sidebar-task-toggle hidden');
+    expect(html).not.toContain('onclick="toggleTaskGroup(this, event)"');
   });
 
   it('embeds structured history data and renders the scope toggle mount point', () => {
@@ -190,7 +191,7 @@ describe('template', () => {
     expect(html).not.toContain('href="task-b.html" target="_blank"');
     expect(html).toContain('href="task-b.html" title="Task B"');
     expect(html).toContain("location.pathname === '/_view'");
-    expect(html).toContain('window.__svRuntimeVersion = 6;');
+    expect(html).toContain('window.__svRuntimeVersion = 7;');
   });
 
   it('renders persisted feedback items into the bootstrap payload', () => {
@@ -219,6 +220,19 @@ describe('template', () => {
     expect(html).toContain('persistedFeedbackItems');
   });
 
+  it('embeds a data-url favicon so pages do not request favicon.ico', () => {
+    const html = buildHtml({
+      title: 'Favicon test',
+      theme: 'auto',
+      contentHtml: '<div>Body</div>',
+      typeLabel: 'Article',
+      taskId: 'task-favicon',
+    });
+
+    expect(html).toContain('rel="icon"');
+    expect(html).toContain('data:image/svg+xml,');
+  });
+
   it('renders the inline-first review runtime and multiline editing affordances', () => {
     const html = buildHtml({
       title: 'Review runtime',
@@ -236,6 +250,47 @@ describe('template', () => {
     expect(html).toContain('Autosaves after you pause');
     expect(html).toContain('function copyBlock(btn, e)');
     expect(html).toContain('function fallbackCopyText(text)');
+    expect(html).toContain('function normalizeClipboardText(text)');
+    expect(html).not.toContain('(?<!');
+    expect(html).toContain("function(_match, prefix, content)");
+    expect(html).toContain("'<em>' + content + '</em>'");
+  });
+
+  it('normalizes multiline copy payloads to LF line endings', () => {
+    const attrs = copyDataAttributes('Line one\r\nLine two');
+    expect(attrs).toContain(encodeURIComponent('Line one\nLine two'));
+    expect(attrs).not.toContain('%0D%0A');
+  });
+
+  it('keeps review overlays from overlapping on mobile', () => {
+    const html = buildHtml({
+      title: 'Review overlay',
+      theme: 'auto',
+      contentHtml: '<div>Body</div>',
+      typeLabel: 'Article',
+      taskId: 'task-overlay',
+    });
+
+    expect(html).toContain('body.sv-comment-panel-open .sv-selection-toolbar');
+    expect(html).toContain('.sv-selection-toolbar {');
+    expect(html).toContain('position: fixed;');
+    expect(html).toContain('Saved in this browser');
+    expect(html).toContain('Live sync unavailable. Rename saved locally.');
+  });
+
+  it('handles live feedback SSE updates in served mode', () => {
+    const html = buildHtml({
+      title: 'Live feedback',
+      theme: 'auto',
+      contentHtml: '<div>Body</div>',
+      typeLabel: 'Article',
+      taskId: 'task-feedback-sse',
+    });
+
+    expect(html).toContain("data.type === 'feedback'");
+    expect(html).toContain("data.type === 'feedback_delete'");
+    expect(html).toContain('upsertFeedbackItem(data.item)');
+    expect(html).toContain('feedbackItems = feedbackItems.filter(function(item) { return item.id !== data.itemId; });');
   });
 
   it('renders today page without review chrome', () => {

@@ -1,5 +1,5 @@
 import type { HistoryClientEntry, HistoryDataPayload, HistoryEntry, HistoryTaskGroup } from '../types.js';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { getUnresolvedCommentCount } from './feedback.js';
 
@@ -21,6 +21,12 @@ export function ensureDir(basePath: string): string {
     mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+
+function writeFileAtomic(filePath: string, content: string): void {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, content, 'utf-8');
+  renameSync(tempPath, filePath);
 }
 
 export function appendHistory(basePath: string, entry: HistoryEntry): void {
@@ -54,11 +60,7 @@ export function renameTask(basePath: string, taskId: string, newTitle: string): 
     return 0;
   }
 
-  writeFileSync(
-    filePath,
-    updatedEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
-    'utf-8',
-  );
+  writeFileAtomic(filePath, updatedEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
 
   return renamedCount;
 }
@@ -92,11 +94,7 @@ export function updateTaskVersionHistory(basePath: string, taskId: string, versi
     return 0;
   }
 
-  writeFileSync(
-    filePath,
-    nextEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n',
-    'utf-8',
-  );
+  writeFileAtomic(filePath, nextEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
 
   return updatedCount;
 }

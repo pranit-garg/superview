@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, renameSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, renameSync, statSync, realpathSync } from 'node:fs';
 import { join, resolve, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -12,31 +12,31 @@ import { readCanonicalContentSnapshot, upsertTaskContentManifest } from './core/
 import type { ContentType, ThemeMode, HistoryEntry, ReviewBundle } from './types.js';
 
 const HELP = `
-superview - Render AI output as beautiful, reviewable HTML
+superview - Render AI output to file-first review HTML
 
 Usage:
-  superview render <file|->     Render content and open in browser
-  superview comment <file|->    Render with comment mode enabled
-  superview history             Open history browser
-  superview review <id>         View/export the canonical review bundle
+  superview render <file|->        Render content and open in browser
+  superview comment <file|->       Render with comment mode enabled
+  superview history                Open history browser
+  superview review <id>            View/export the canonical review bundle
   superview review --summary <id>  Human-readable review summary
   superview review --json <id>     Structured JSON review output
-  superview review --latest       View the most recently updated review bundle
+  superview review --latest        View the most recently updated review bundle
   superview review --latest --json  Structured JSON of latest review
   superview review --latest --summary  Human-readable latest review summary
-  superview content --latest      Print latest canonical content
+  superview content --latest       Print latest canonical content
   superview content --latest --json  Structured JSON of latest canonical content
-  superview inbox ...           Agent-facing alias for \`review\`
-  superview feedback ...        Alias for \`review\`
-  superview import-review <file>  Import a review bundle JSON file
-  superview keep <task-id>      Keep a temp view (remove -temp suffix)
-  superview today [--open]      Generate today page, optionally open it
-  superview sync                Rebuild shared history assets for this folder
-  superview setup-claude        Print CLAUDE.md integration snippet
-  superview serve               Start local server (real-time feedback)
-  superview init                Initialize .superview/ in current dir
-  superview clean               Remove temp views older than 7 days
-  superview "<text>"            Shorthand: render inline content
+  superview inbox ...              Agent-facing alias for \`review\`
+  superview feedback ...           Alias for \`review\`
+  superview import-review <file>   Import a review bundle JSON file
+  superview keep <task-id>         Keep a temp view (remove -temp suffix)
+  superview today [--open]         Generate today page, optionally open it
+  superview sync                   Rebuild shared history assets for this folder
+  superview setup-claude           Print CLAUDE.md integration snippet
+  superview serve                  Start local server (real-time feedback)
+  superview init                   Initialize .superview/ in current dir
+  superview clean                  Remove temp views older than 7 days
+  superview "<text>"               Shorthand: render inline content
 
 Options:
   --type <type>       Content type: email|tweet|thread|message|linkedin|document|code|table|generic
@@ -506,7 +506,6 @@ function handleServe(args: string[]): void {
   const baseDir = baseDirArg >= 0 ? resolve(args[baseDirArg + 1]) : process.cwd();
   syncSharedArtifacts(baseDir);
   startServer(baseDir, port);
-  console.log(`[superview] Feedback server running at ${baseDir}. Press Ctrl+C to stop.`);
 }
 
 function handleInit(args: string[]): void {
@@ -703,16 +702,16 @@ When creating content (tweets, threads, emails, messages, documents):
    \`echo "content" > /tmp/sv-draft.md\`
 
 2. Render with superview:
-   \`npx superview render /tmp/sv-draft.md --type <type> --title "<title>" --task-id "<id>" --no-open\`
+   \`superview render /tmp/sv-draft.md --type <type> --title "<title>" --task-id "<id>" --no-open\`
 
 3. Tell the user: "Rendered at [path]. Open that HTML file directly to review and leave comments."
    Do NOT tell the user to open localhost unless they explicitly started \`superview serve\`.
 
 4. When user says "iterate", "v2", or asks for feedback on the latest edited draft:
    First read the latest canonical Superview content:
-   \`npx superview content --latest --json --base-dir "<working-dir>"\`
+   \`superview content --latest --json --base-dir "<working-dir>"\`
    Then read the latest review bundle:
-   \`npx superview inbox --latest --json --base-dir "<working-dir>"\`
+   \`superview inbox --latest --json --base-dir "<working-dir>"\`
    Note: \`superview inbox --latest --json\` already includes the current canonical \`content\` field, so one command is often enough.
    Improve content against that canonical edited text, then render v2 with --version 2 --previous.
 
@@ -781,7 +780,16 @@ async function main(): Promise<void> {
   await runCli(process.argv.slice(2));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isCliEntrypoint(argvPath = process.argv[1]): boolean {
+  if (!argvPath) return false;
+  try {
+    return realpathSync(argvPath) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return resolve(argvPath) === fileURLToPath(import.meta.url);
+  }
+}
+
+if (isCliEntrypoint()) {
   main().catch(err => {
     console.error(err);
     process.exit(1);

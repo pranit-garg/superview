@@ -21,7 +21,7 @@ import { readTaskManifest } from './task-content.js';
 const LEGACY_MARKERS = [
   'window.__svEmbeddedHistoryData',
   'window.__svBasePath',
-  'window.__svRuntimeVersion = 6',
+  'window.__svRuntimeVersion = 7',
   'id="sv-sidebar-scope"',
   'id="sv-page-title"',
 ];

@@ -63,26 +63,40 @@ export function getThemeCSS(): string {
 export function getThemeScript(mode: ThemeMode): string {
   return `
     (function() {
-      var stored = localStorage.getItem('sv-theme');
+      function setTheme(theme) {
+        document.documentElement.classList.remove('day', 'night');
+        document.documentElement.classList.add(theme);
+        window.__svTheme = theme;
+      }
+      var stored = null;
+      try {
+        stored = localStorage.getItem('sv-theme');
+      } catch (_) {}
       var theme = stored || '${mode === 'auto' ? 'auto' : mode}';
       if (theme === 'auto') {
         var hour = new Date().getHours();
         theme = (hour >= 18 || hour < 6) ? 'night' : 'day';
       }
-      document.documentElement.className = theme;
-      window.__svTheme = theme;
+      setTheme(theme);
     })();
   `;
 }
 
 export function getThemeToggleScript(): string {
   return `
+    function setTheme(theme) {
+      document.documentElement.classList.remove('day', 'night');
+      document.documentElement.classList.add(theme);
+      window.__svTheme = theme;
+    }
+
     function toggleTheme() {
-      var current = document.documentElement.className;
+      var current = document.documentElement.classList.contains('night') ? 'night' : 'day';
       var next = current === 'day' ? 'night' : 'day';
-      document.documentElement.className = next;
-      window.__svTheme = next;
-      localStorage.setItem('sv-theme', next);
+      setTheme(next);
+      try {
+        localStorage.setItem('sv-theme', next);
+      } catch (_) {}
       var lbl = document.getElementById('sv-toolbar-theme-label');
       if (lbl) lbl.textContent = next === 'day' ? 'Night' : 'Day';
     }
